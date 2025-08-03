@@ -1,0 +1,18 @@
+{
+   "experiments": [
+      {
+         "dataset": "app_reviews",
+         "N": 288065,
+         "M": 32,
+         "M_beta": 64,
+         "gamma": 80,
+         "query_num": 9,
+         "threads": 32,
+         "efs_start": 100,
+         "efs_end": 1000,
+         "efs_step": 100,
+         "repeat_num": 1,
+         "if_bfs_filter": true
+      }
+   ]
+}

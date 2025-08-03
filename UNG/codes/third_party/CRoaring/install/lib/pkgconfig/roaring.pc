@@ -1,0 +1,10 @@
+prefix=/data/fxy/FilterVectorCode/UNG_1/codes/third_party/CRoaring/install
+exec_prefix=${prefix}
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: roaring
+Description: Roaring bitmap implementation in C
+Version: 4.3.5
+Cflags: -I${includedir}
+Libs: -L${libdir} -lroaring
