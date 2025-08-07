@@ -42,13 +42,14 @@ float calculate_single_query_recall(const std::pair<ANNS::IdxType, float> *gt,
 int main(int argc, char **argv)
 {
    std::string data_type, dist_fn, scenario;
-   std::string base_bin_file, query_bin_file, base_label_file, query_label_file, gt_file, index_path_prefix, result_path_prefix;
+   std::string base_bin_file, query_bin_file, base_label_file, query_label_file, gt_file, index_path_prefix, result_path_prefix, query_group_id_file;
    ANNS::IdxType K, num_entry_points;
    std::vector<ANNS::IdxType> Lsearch_list;
    uint32_t num_threads;
-   bool is_new_method = false; // true: use new method
-   bool is_ori_ung = false;    // true: use original ung
-   int num_repeats = 1;        // 默认重复1次
+   bool is_new_method = false;          // true: use new method
+   bool is_ori_ung = false;             // true: use original ung
+   bool is_select_entry_groups = false; // false:默认的mini entry groups
+   int num_repeats = 1;                 // 默认重复1次
 
    try
    {
@@ -74,6 +75,8 @@ int main(int argc, char **argv)
                          "Number of threads to use");
       desc.add_options()("result_path_prefix", po::value<std::string>(&result_path_prefix)->required(),
                          "Path to save the querying result file");
+      desc.add_options()("query_group_id_file", po::value<std::string>(&query_group_id_file)->required(),
+                         "query_group_id_file");
 
       // graph search parameters
       desc.add_options()("scenario", po::value<std::string>(&scenario)->default_value("containment"),
@@ -88,6 +91,8 @@ int main(int argc, char **argv)
                          "is_new_method");
       desc.add_options()("is_ori_ung", po::value<bool>(&is_ori_ung)->required(),
                          "is_ori_ung");
+      desc.add_options()("is_select_entry_groups", po::value<bool>(&is_select_entry_groups)->required(),
+                         "is_select_entry_groups");
       desc.add_options()("num_repeats", po::value<int>(&num_repeats)->default_value(1),
                          "Number of repeats for each Lsearch value");
 
@@ -122,6 +127,24 @@ int main(int argc, char **argv)
    index.load(index_path_prefix, data_type);
    index.load_bipartite_graph(index_path_prefix + "vector_attr_graph");
 
+   // 加载查询来源组ID文件
+   std::vector<ANNS::IdxType> true_query_group_ids;
+   std::ifstream source_group_file(query_group_id_file);
+   if (source_group_file.is_open())
+   {
+      ANNS::IdxType group_id;
+      while (source_group_file >> group_id)
+      {
+         true_query_group_ids.push_back(group_id);
+      }
+      source_group_file.close();
+      std::cout << "成功加载 " << true_query_group_ids.size() << " 个查询的来源组ID。" << std::endl;
+   }
+   else // 即使没找到，程序也可以继续，只是没有优化效果
+   {
+      std::cerr << "警告：未找到查询来源组ID文件: " << query_group_id_file << std::endl;
+   }
+
    // preparation
    auto num_queries = query_storage->get_num_points();
    std::shared_ptr<ANNS::DistanceHandler> distance_handler = ANNS::get_distance_handler(data_type, dist_fn);
@@ -139,6 +162,7 @@ int main(int argc, char **argv)
       bitmap[id] = bitmap_and_time[id].first;
    }
 
+   // init query stats
    std::vector<std::vector<std::vector<ANNS::QueryStats>>> query_stats(num_repeats, std::vector<std::vector<ANNS::QueryStats>>(Lsearch_list.size(), std::vector<ANNS::QueryStats>(num_queries))); //(repeat,Lsearch,queryID)
 
    for (int repeat = 0; repeat < num_repeats; ++repeat)
@@ -159,7 +183,7 @@ int main(int argc, char **argv)
             index.search(query_storage, distance_handler, num_threads, Lsearch_list[LsearchId], num_entry_points, scenario, K, results, num_cmps, bitmap);
          else
             index.search_hybrid(query_storage, distance_handler, num_threads, Lsearch_list[LsearchId],
-                                num_entry_points, scenario, K, results, num_cmps, query_stats[repeat][LsearchId], bitmap, is_ori_ung);
+                                num_entry_points, scenario, K, results, num_cmps, query_stats[repeat][LsearchId], bitmap, is_ori_ung, is_select_entry_groups, true_query_group_ids);
          auto time_cost = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
          for (int i = 0; i < num_queries; ++i)
             query_stats[repeat][LsearchId][i].recall = calculate_single_query_recall(gt + i * K, results + i * K, K);
@@ -168,7 +192,7 @@ int main(int argc, char **argv)
 
    // 输出详细文件
    std::ofstream detail_out(result_path_prefix + "query_details_repeat" + std::to_string(num_repeats) + ".csv");
-   detail_out << "repeat,Lsearch,QueryID,Time(ms),descendants_merge_time(ms),coverage_merge_time(ms),flag_time(ms),bitmap_time(ms),UNG_time(ms),DistanceCalcs,EntryPoints,LNGDescendants,entry_group_total_coverage,QPS,Recall,is_global_search\n";
+   detail_out << "repeat,Lsearch,QueryID,Time(ms),get_entry_group_start_time(ms),descendants_merge_time(ms),coverage_merge_time(ms),flag_time(ms),bitmap_time(ms),UNG_time(ms),DistanceCalcs,EntryPoints,LNGDescendants,entry_group_total_coverage,QPS,Recall,is_global_search\n";
 
    for (int repeat = 0; repeat < num_repeats; repeat++)
    {
@@ -180,11 +204,12 @@ int main(int argc, char **argv)
                        << Lsearch_list[LsearchId] << ","
                        << i << ","
                        << query_stats[repeat][LsearchId][i].time_ms << ","
+                       << query_stats[repeat][LsearchId][i].get_group_entry_time_ms << ","
                        << query_stats[repeat][LsearchId][i].descendants_merge_time_ms << ","
                        << query_stats[repeat][LsearchId][i].coverage_merge_time_ms << ","
                        << query_stats[repeat][LsearchId][i].flag_time_ms << ","
                        << bitmap_and_time[i].second << ","
-                       << query_stats[repeat][LsearchId][i].time_ms - query_stats[repeat][LsearchId][i].flag_time_ms << ","
+                       << query_stats[repeat][LsearchId][i].time_ms - query_stats[repeat][LsearchId][i].flag_time_ms - query_stats[repeat][LsearchId][i].get_group_entry_time_ms << ","
                        << query_stats[repeat][LsearchId][i].num_distance_calcs << ","
                        << query_stats[repeat][LsearchId][i].num_entry_points << ","
                        << query_stats[repeat][LsearchId][i].num_lng_descendants << ","

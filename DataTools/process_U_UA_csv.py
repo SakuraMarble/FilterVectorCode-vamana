@@ -9,12 +9,13 @@ import glob
 
 # 1. 需要处理的数据集名称列表
 DATASETS_TO_PROCESS = ['app_reviews']
+dataset = "app_reviews"
 
 # 2. 存放实验结果的根目录
 BASE_RESULTS_DIR = '/data/fxy/FilterVector/FilterVectorResults'
 
 # 3. 用于保存处理后合并文件的输出目录
-OUTPUT_DIR = '/data/fxy/FilterVector/FilterVectorResults/merge_results/improve2/U_UA'
+OUTPUT_DIR = "/data/fxy/FilterVector/FilterVectorResults/merge_results/improve2/U_UA/"+dataset
 
 # ==============================================================================
 
@@ -65,7 +66,7 @@ def main():
             
             # 从 ACORN 目录名中用正则解析出通用参数
             pattern = re.compile(
-                r".*?_query(\d+)_th(\d+)_.*?_M(\d+)_LB(\d+)_alpha([\d.]+)_C(\d+)_EP(\d+)_Ls(\d+)_Le(\d+)_Lp(\d+)_REPEATs(\d+)"
+               r".*?_query(\d+)_(sep(?:true|false))_th(\d+)_.*?_M(\d+)_LB(\d+)_alpha([\d.]+)_C(\d+)_EP(\d+)_Ls(\d+)_Le(\d+)_Lp(\d+)_REPEATs(\d+)"
             )
             match = pattern.match(acorn_dir_name)
 
@@ -74,8 +75,8 @@ def main():
                 continue
             
             # 构建对应的 UNG 目录名
-            (query, th, M, LB, alpha, C, EP, Ls, Le, Lp, REPEATs) = match.groups()
-            ung_dir_name = f"{dataset}_query{query}_th{th}_M{M}_LB{LB}_alpha{alpha}_C{C}_EP{EP}_Ls{Ls}_Le{Le}_Lp{Lp}_REPEATs{REPEATs}"
+            (query, sep, th, M, LB, alpha, C, EP, Ls, Le, Lp, REPEATs) = match.groups()
+            ung_dir_name = f"{dataset}_query{query}_{sep}_th{th}_M{M}_LB{LB}_alpha{alpha}_C{C}_EP{EP}_Ls{Ls}_Le{Le}_Lp{Lp}_REPEATs{REPEATs}"
             
             # 查找配对的CSV文件
             acorn_csv_path = next(iter(glob.glob(os.path.join(acorn_dir, 'results', 'query_details_repeat*.csv'))), None)

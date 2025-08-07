@@ -24,6 +24,7 @@ namespace ANNS
       double flag_time_ms;
       double descendants_merge_time_ms; // descendants合并耗时
       double coverage_merge_time_ms;    // coverage合并耗时
+      double get_group_entry_time_ms;   // 计算入口点耗时
       double entry_group_total_coverage;
       size_t num_distance_calcs;
       size_t num_entry_points;
@@ -57,6 +58,13 @@ namespace ANNS
       int M, M_beta, gamma, efs, compute_recall;
    };
 
+   // 定义入口点选择策略的枚举
+   enum class SelectionMode
+   {
+      SizeOnly,       // 策略1：只考虑组的 size
+      SizeAndDistance // 策略2：综合考虑 size 和 LNG 跳数
+   };
+
    class UniNavGraph
    {
    public:
@@ -81,7 +89,9 @@ namespace ANNS
                          std::vector<float> &num_cmps,
                          std::vector<QueryStats> &query_stats,
                          std::vector<std::bitset<10000001>> &bitmaps,
-                         bool is_ori_ung);
+                         bool is_ori_ung,
+                         bool is_select_entry_groups,
+                         const std::vector<IdxType> &true_query_group_ids = {}); // 包含每个查询其真实来源组ID的向量
 
       // I/O
       void save(std::string index_path_prefix, std::string results_path_prefix);
@@ -145,6 +155,9 @@ namespace ANNS
           float child_max_coverage_ratio,   // 子节点的最大覆盖率阈值 (例如 0.005)
           float query_min_selectivity,      // 查询的最小选择率 (例如 0.0005, 即0.05%)
           float query_max_selectivity);     // 查询的最大选择率 (例如 0.01, 即1%)
+      std::vector<int> _lng_node_depths;    // 存储每个group_id的图深度,generate_queries_hard_sandwich需要用
+      void _precompute_lng_node_depths();
+
       void load_bipartite_graph(const std::string &filename);
       bool compare_graphs(const ANNS::UniNavGraph &g1, const ANNS::UniNavGraph &g2);
       IdxType _num_points;
@@ -160,6 +173,13 @@ namespace ANNS
       std::vector<BitsetType> _covered_sets_bits;    // 每个 group 的覆盖集合
       std::vector<roaring::Roaring> _lng_descendants_rb;
       std::vector<roaring::Roaring> _covered_sets_rb;
+
+      std::vector<IdxType> select_entry_groups(
+          const std::vector<IdxType> &minimum_entry_sets, // 基础入口，必须包含
+          SelectionMode mode,                             // 选择的策略模式
+          size_t top_k,                                   // 除了基础入口外，额外选择 K 个最优入口
+          double beta = 1.0,                              // 策略2中，用于调节跳数权重的 beta 值
+          IdxType true_query_group_id = 0) const;         // 声明为 const 函数，因为它不应修改图的状态
 
    private:
       // data

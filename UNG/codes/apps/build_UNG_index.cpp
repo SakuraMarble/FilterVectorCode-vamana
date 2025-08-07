@@ -210,13 +210,13 @@ int main(int argc, char **argv)
       else if (generate_query_task == "hard_sandwich") // 极端数据方法3-硬三明治
       {
          index.generate_queries_hard_sandwich(
-             5000,            // 生成查询的个数
+             2000,            // 生成查询的个数
              query_file_path, // 输出目录
              dataset,         // 数据集名字
-             0.02f,           // 父节点覆盖率至少
+             0.01f,           // 父节点覆盖率至少
              0.005f,          // 子节点覆盖率至多
-             0.07f,           // 查询选择率至少
-             0.1f             // 查询选择率至多
+             0.005f,          // 查询选择率至少
+             0.008f           // 查询选择率至多
          );
       }
 

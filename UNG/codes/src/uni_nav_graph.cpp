@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <bitset>
 #include <boost/dynamic_bitset.hpp>
+#include <iomanip>
 
 #include "utils.h"
 #include "vamana/vamana.h"
@@ -108,6 +109,9 @@ namespace ANNS
 
          // initialize_lng_descendants_coverage_bitsets();
          initialize_roaring_bitsets();
+
+         // precompute the node depths in the label navigating graph,used in hard sandwitch
+         _precompute_lng_node_depths();
 
          if (!new_cross_edge.ung_and_acorn)
             build_cross_group_edges();
@@ -204,6 +208,171 @@ namespace ANNS
          if (is_min)
             min_super_set_ids.emplace_back(cur_group_id);
       }
+   }
+
+   // 为了方便排序，定义一个结构体来存储候选组及其评分
+   struct ScoredCandidate
+   {
+      double score;
+      ANNS::IdxType group_id;
+
+      // 重载小于运算符，方便使用 std::sort 进行降序排序
+      bool operator<(const ScoredCandidate &other) const
+      {
+         return score > other.score; // score 越大越靠前
+      }
+   };
+
+   std::vector<IdxType> UniNavGraph::select_entry_groups(
+       const std::vector<IdxType> &minimum_entry_sets,
+       SelectionMode mode,
+       size_t top_k,
+       double beta,
+       IdxType true_query_group_id) const
+   {
+      std::cout << "\n[select_entry_groups] 启动..." << std::endl;
+      std::cout << " - 初始最小入口组 (" << minimum_entry_sets.size() << "个): { ";
+      for (size_t i = 0; i < minimum_entry_sets.size(); ++i)
+         std::cout << minimum_entry_sets[i] << (i == minimum_entry_sets.size() - 1 ? "" : ", ");
+      std::cout << " }" << std::endl;
+      std::cout << " - 期望额外选择 top_k: " << top_k << std::endl;
+      if (true_query_group_id > 0)
+      {
+         std::cout << " - 接收到真实来源组 (Oracle Group): " << true_query_group_id << std::endl;
+      }
+      else
+      {
+         std::cout << " - 未提供真实来源组。" << std::endl;
+      }
+
+      assert(_label_nav_graph != nullptr && "Error: _label_nav_graph should not be null.");
+
+      if (top_k == 0 && true_query_group_id == 0)
+      {
+         std::cout << "[select_entry_groups] 无需选择，直接返回初始组。" << std::endl;
+         return minimum_entry_sets;
+      }
+      if (minimum_entry_sets.empty() && true_query_group_id == 0)
+      {
+         std::cout << "[select_entry_groups] 无有效入口，返回空。" << std::endl;
+         return {};
+      }
+
+      // --- 步骤 1: 运行BFS ---
+      // [LOG]
+      std::cout << "[Step 1] 开始从初始组进行BFS以计算距离..." << std::endl;
+      std::queue<IdxType> q;
+      std::vector<int> lng_distance(_num_groups + 1, -1);
+      for (const auto &group_id : minimum_entry_sets)
+      {
+         if (group_id > 0 && group_id <= _num_groups && lng_distance[group_id] == -1)
+         {
+            q.push(group_id);
+            lng_distance[group_id] = 0;
+         }
+      }
+      int visited_count = q.size();
+      while (!q.empty())
+      {
+         IdxType current_group = q.front();
+         q.pop();
+         if (current_group >= _label_nav_graph->out_neighbors.size())
+            continue;
+         for (const auto &child_group : _label_nav_graph->out_neighbors[current_group])
+         {
+            if (child_group > 0 && child_group <= _num_groups && lng_distance[child_group] == -1)
+            {
+               lng_distance[child_group] = lng_distance[current_group] + 1;
+               q.push(child_group);
+               visited_count++;
+            }
+         }
+      }
+      std::cout << " - BFS 完成。共访问 " << visited_count << " 个组。" << std::endl;
+
+      // --- 步骤 2: 收集和评分候选人 ---
+      std::cout << "[Step 2] 正在为所有后代组评分..." << std::endl;
+      std::vector<ScoredCandidate> candidates;
+      for (IdxType group_id = 1; group_id <= _num_groups; ++group_id)
+      {
+         if (lng_distance[group_id] > 0)
+         {
+            const double group_size = static_cast<double>(_group_id_to_vec_ids[group_id].size());
+            double score = 0.0;
+            if (mode == SelectionMode::SizeOnly)
+            {
+               score = group_size;
+            }
+            else
+            { // SizeAndDistance
+               const double dist = static_cast<double>(lng_distance[group_id]);
+               score = group_size * std::log(1.0 + beta * dist) + 1e-9;
+            }
+            if (score > 0)
+            {
+               candidates.push_back({score, group_id});
+            }
+         }
+      }
+      std::cout << " - 评分完成。找到 " << candidates.size() << " 个有效的候选入口组。" << std::endl;
+
+      // --- 步骤 3: 排序并选择 ---
+      std::cout << "[Step 3] 正在排序并选择最终的入口组..." << std::endl;
+      std::sort(candidates.begin(), candidates.end());
+
+      //  打印评分最高的几个候选组
+      size_t top_n_to_show = std::min((size_t)5, candidates.size());
+      if (top_n_to_show > 0)
+      {
+         std::cout << " - 评分最高的 " << top_n_to_show << " 个候选组：" << std::endl;
+         for (size_t i = 0; i < top_n_to_show; ++i)
+         {
+            std::cout << "   - Rank " << i + 1 << ": Group " << candidates[i].group_id
+                      << ", Score: " << std::fixed << std::setprecision(2) << candidates[i].score << std::endl;
+         }
+      }
+
+      std::vector<IdxType> final_entry_groups = minimum_entry_sets;
+      std::unordered_set<IdxType> existing_groups(minimum_entry_sets.begin(), minimum_entry_sets.end());
+
+      // =======================> 核心修改逻辑 + 日志 <=======================
+      if (true_query_group_id > 0 && true_query_group_id <= _num_groups)
+      {
+         if (existing_groups.find(true_query_group_id) == existing_groups.end())
+         {
+            final_entry_groups.push_back(true_query_group_id);
+            existing_groups.insert(true_query_group_id);
+            std::cout << " - [注入成功] 已将真实来源组 " << true_query_group_id << " 添加到入口列表。" << std::endl;
+         }
+         else
+         {
+            std::cout << " - [注入提示] 真实来源组 " << true_query_group_id << " 已存在于初始列表中。" << std::endl;
+         }
+      }
+      // =======================> 修改结束 <=======================
+
+      for (const auto &candidate : candidates)
+      {
+         if (final_entry_groups.size() >= minimum_entry_sets.size() + top_k)
+         {
+            break;
+         }
+         if (existing_groups.find(candidate.group_id) == existing_groups.end())
+         {
+            final_entry_groups.push_back(candidate.group_id);
+            existing_groups.insert(candidate.group_id);
+            std::cout << "   -> 添加候选组: " << candidate.group_id
+                      << " (Score: " << std::fixed << std::setprecision(2) << candidate.score << ")" << std::endl;
+         }
+      }
+
+      std::cout << "[select_entry_groups] 完成。" << std::endl;
+      std::cout << " - 最终选定入口组 (" << final_entry_groups.size() << "个): { ";
+      for (size_t i = 0; i < final_entry_groups.size(); ++i)
+         std::cout << final_entry_groups[i] << (i == final_entry_groups.size() - 1 ? "" : ", ");
+      std::cout << " }" << std::endl;
+
+      return final_entry_groups;
    }
 
    void UniNavGraph::prepare_group_storages_graphs()
@@ -1238,32 +1407,163 @@ namespace ANNS
          std::cout << "  - Generated " << candidates.size() << " initial cross-group candidates from ACORN results." << std::endl;
          std::cout << "  - Skipped " << intra_group_edges_skipped << " potential edges because they were intra-group." << std::endl;
 
-         std::cout << "[Step 2] Adding new edges with sparsity control (M=" << new_cross_edge.M_in_add_new_edge << ")..." << std::endl;
-         std::sort(candidates.begin(), candidates.end(), [](const auto &a, const auto &b)
-                   { return a.distance < b.distance; });
-         std::vector<std::atomic<IdxType>> new_edge_out_degree(_num_points);
+         // ============================================================================================
+         // FXY_FIX: 这是策略一的最终修复版本
+         // ============================================================================================
+         std::cout << "[Step 2] Adding new edges with smart selection logic and in-degree control (M=" << new_cross_edge.M_in_add_new_edge << ")..." << std::endl;
+
+         // 1. 按“查询点”对所有候选邻居进行分组
+         std::unordered_map<IdxType, std::vector<NewEdgeCandidate>> query_to_candidates;
+         for (const auto &cand : candidates)
+         {
+            query_to_candidates[cand.from].push_back(cand);
+         }
+
+         _num_distance_oriented_edges = 0;
+
+         // FXY_FIX: 1. 重新引入全局的入度计数器
          std::vector<std::atomic<IdxType>> new_edge_in_degree(_num_points);
          for (size_t i = 0; i < _num_points; ++i)
          {
-            new_edge_out_degree[i] = 0;
             new_edge_in_degree[i] = 0;
          }
-         _num_distance_oriented_edges = 0;
 
-         for (const auto &cand : candidates)
+         // 2. 遍历每个查询点，独立地为其选择最佳出边
+         for (auto const &[query_id, cand_list] : query_to_candidates)
          {
-            if (new_edge_out_degree[cand.from].load() < new_cross_edge.M_in_add_new_edge && new_edge_in_degree[cand.to].load() < new_cross_edge.M_in_add_new_edge)
+            std::vector<NewEdgeCandidate> hierarchical_candidates;
+            std::vector<NewEdgeCandidate> non_hierarchical_candidates;
+
+            IdxType from_group = _new_vec_id_to_group_id[query_id];
+
+            // 3. 将候选邻居分为“层级邻居”和“普通邻居”两个桶
+            for (const auto &cand : cand_list)
             {
-               _graph->neighbors[cand.from].push_back(cand.to);
-               _num_distance_oriented_edges++;
-               new_edge_out_degree[cand.from]++;
-               new_edge_in_degree[cand.to]++;
-               uint64_t edge_key = (uint64_t)cand.from << 32 | cand.to;
-               _my_new_edges_set.insert(edge_key);
+               IdxType to_group = _new_vec_id_to_group_id[cand.to];
+               const auto &children = _label_nav_graph->out_neighbors[from_group];
+               bool is_hierarchical = false;
+               for (const auto &true_child : children)
+               {
+                  if (to_group == true_child)
+                  {
+                     is_hierarchical = true;
+                     break;
+                  }
+               }
+               if (is_hierarchical)
+               {
+                  hierarchical_candidates.push_back(cand);
+               }
+               else
+               {
+                  non_hierarchical_candidates.push_back(cand);
+               }
+            }
+
+            // 4. 对两个桶内的候选者分别按距离排序
+            std::sort(hierarchical_candidates.begin(), hierarchical_candidates.end(),
+                      [](const auto &a, const auto &b)
+                      { return a.distance < b.distance; });
+            std::sort(non_hierarchical_candidates.begin(), non_hierarchical_candidates.end(),
+                      [](const auto &a, const auto &b)
+                      { return a.distance < b.distance; });
+
+            // 5. 智能添加边：同时考虑出度、入度限制
+            size_t edges_added_for_this_query = 0;
+            const size_t max_out_degree = new_cross_edge.M_in_add_new_edge;
+            const size_t max_in_degree = new_cross_edge.M_in_add_new_edge; // 通常入度和出度限制相同
+
+            // 5.1. 优先添加层级邻居
+            for (const auto &cand : hierarchical_candidates)
+            {
+               if (edges_added_for_this_query >= max_out_degree)
+                  break;
+
+               // FXY_FIX: 2. 在添加边时检查目标节点的入度
+               if (new_edge_in_degree[cand.to].load() < max_in_degree)
+               {
+                  uint64_t edge_key = (uint64_t)cand.from << 32 | cand.to;
+                  if (_my_new_edges_set.find(edge_key) == _my_new_edges_set.end())
+                  {
+                     _graph->neighbors[cand.from].push_back(cand.to);
+                     _num_distance_oriented_edges++;
+                     edges_added_for_this_query++;
+                     // FXY_FIX: 3. 成功添加后，才增加目标节点的入度计数
+                     new_edge_in_degree[cand.to]++;
+                     _my_new_edges_set.insert(edge_key);
+                  }
+               }
+            }
+
+            // 5.2. 如果出度名额还有剩余，用普通邻居来填充
+            for (const auto &cand : non_hierarchical_candidates)
+            {
+               if (edges_added_for_this_query >= max_out_degree)
+                  break;
+
+               // FXY_FIX: 2. 同样检查目标节点的入度
+               if (new_edge_in_degree[cand.to].load() < max_in_degree)
+               {
+                  uint64_t edge_key = (uint64_t)cand.from << 32 | cand.to;
+                  if (_my_new_edges_set.find(edge_key) == _my_new_edges_set.end())
+                  {
+                     _graph->neighbors[cand.from].push_back(cand.to);
+                     _num_distance_oriented_edges++;
+                     edges_added_for_this_query++;
+                     // FXY_FIX: 3. 成功添加后，才增加目标节点的入度计数
+                     new_edge_in_degree[cand.to]++;
+                     _my_new_edges_set.insert(edge_key);
+                  }
+               }
             }
          }
 
-         std::cout << "  - Added a total of " << _num_distance_oriented_edges << " new distance-oriented edges to the graph." << std::endl;
+         std::cout << "  - Added a total of " << _num_distance_oriented_edges << " new distance-oriented edges to the graph with smart selection and in-degree control." << std::endl;
+
+         // 诊断分析部分
+         std::set<std::pair<IdxType, IdxType>> acorn_connected_group_pairs;
+         for (const auto &edge_key : _my_new_edges_set)
+         {
+            IdxType from_id = edge_key >> 32;
+            IdxType to_id = edge_key & 0xFFFFFFFF;
+            acorn_connected_group_pairs.insert({_new_vec_id_to_group_id[from_id], _new_vec_id_to_group_id[to_id]});
+         }
+
+         std::cout << "\n--- [Cross-Edge Sub-step 3.5: ACORN Edge Connectivity Analysis] ---" << std::endl;
+         // ... (诊断分析的 cout 代码完全不变) ...
+         size_t total_required_hierarchical_links = 0;
+         for (IdxType group_id = 1; group_id <= _num_groups; ++group_id)
+         {
+            total_required_hierarchical_links += _label_nav_graph->out_neighbors[group_id].size();
+         }
+         std::cout << "  - Total parent->child links in hierarchy: " << total_required_hierarchical_links << std::endl;
+         std::cout << "  - ACORN edges created " << acorn_connected_group_pairs.size() << " unique group-to-group connections." << std::endl;
+
+         size_t satisfied_hierarchical_links = 0;
+         for (const auto &group_pair : acorn_connected_group_pairs)
+         {
+            IdxType parent_group = group_pair.first;
+            IdxType child_group = group_pair.second;
+            const auto &children = _label_nav_graph->out_neighbors[parent_group];
+            bool is_hierarchical = false;
+            for (const auto &true_child : children)
+            {
+               if (child_group == true_child)
+               {
+                  is_hierarchical = true;
+                  break;
+               }
+            }
+            if (is_hierarchical)
+            {
+               satisfied_hierarchical_links++;
+            }
+         }
+         std::cout << "  - Among them, " << satisfied_hierarchical_links << " connections are valid parent->child links." << std::endl;
+         double satisfaction_rate = total_required_hierarchical_links > 0 ? (double)satisfied_hierarchical_links / total_required_hierarchical_links * 100.0 : 0.0;
+         std::cout << "  - Satisfaction rate of hierarchical links by ACORN: " << satisfaction_rate << "%" << std::endl;
+         std::cout << "--- [Finished ACORN Edge Analysis] ---\n"
+                   << std::endl;
 
          // FXY_ADD: Step 3 计时结束
          _cross_edge_step3_add_dist_edges_time_ms = std::chrono::duration<double, std::milli>(
@@ -1271,7 +1571,7 @@ namespace ANNS
                                                         .count();
          std::cout << "--- [Finished Sub-step 3 in " << _cross_edge_step3_add_dist_edges_time_ms << " ms] ---" << std::endl;
 
-         // FXY_ADD: 计算并保存总的跨组边构建时间
+         // 计算并保存总的跨组边构建时间
          _build_cross_edges_time = std::chrono::duration<double, std::milli>(
                                        std::chrono::high_resolution_clock::now() - acorn_part_start_time)
                                        .count();
@@ -1826,7 +2126,9 @@ namespace ANNS
                                    std::vector<float> &num_cmps,
                                    std::vector<QueryStats> &query_stats,
                                    std::vector<std::bitset<10000001>> &bitmaps,
-                                   bool is_ori_ung)
+                                   bool is_ori_ung,
+                                   bool is_select_entry_groups,
+                                   const std::vector<IdxType> &true_query_group_ids)
    {
       auto num_queries = query_storage->get_num_points();
       _query_storage = query_storage;
@@ -1869,14 +2171,40 @@ namespace ANNS
          }
 
          // 计算入口组信息
+         auto get_entry_group_start_time = std::chrono::high_resolution_clock::now();
          std::vector<IdxType> entry_group_ids;
-         get_min_super_sets(query_labels, entry_group_ids, true, true);
-         stats.num_entry_points = entry_group_ids.size();
+         if (!is_select_entry_groups)
+         {
+            get_min_super_sets(query_labels, entry_group_ids, true, true);
+            stats.num_entry_points = entry_group_ids.size();
+         }
+         else
+         {
+            IdxType true_group_id = 0;
+            if (id < true_query_group_ids.size())
+            {
+               true_group_id = true_query_group_ids[id]; // 获取当前查询的真实组ID
+            }
 
-         // 使用局部作用域限制变量生命周期
+            std::vector<IdxType> base_entry_groups;
+            get_min_super_sets(query_labels, base_entry_groups, true, true);
+            const size_t extra_k = base_entry_groups.size() / 5;
+            const SelectionMode current_mode = SelectionMode::SizeAndDistance;
+            const double beta_value = 1.0;
+            entry_group_ids = select_entry_groups(
+                base_entry_groups,
+                current_mode,
+                extra_k,
+                beta_value,
+                true_group_id);
+            stats.num_entry_points = entry_group_ids.size();
+         }
+         stats.get_group_entry_time_ms = std::chrono::duration<double, std::milli>(
+                                             std::chrono::high_resolution_clock::now() - get_entry_group_start_time)
+                                             .count();
+
+         // 计算flag
          auto flag_start_time = std::chrono::high_resolution_clock::now();
-
-         // 1. 处理 descendants
          stats.num_lng_descendants = [&]()
          {
             roaring::Roaring combined_descendants;
@@ -1885,11 +2213,6 @@ namespace ANNS
             {
                if (group_id > 0 && group_id <= _num_groups)
                {
-                  // #pragma omp critical
-                  // {
-                  //    std::cout << "[DEBUG] Query " << id << ", Group " << group_id << ": Accessing _lng_descendants_rb. Cardinality = "
-                  //                << _lng_descendants_rb[group_id].cardinality() << std::endl;
-                  // }
                   combined_descendants |= _lng_descendants_rb[group_id];
                }
             }
@@ -1898,7 +2221,6 @@ namespace ANNS
             return combined_descendants.cardinality();
          }();
 
-         // 2. 处理 coverage
          float total_unique_coverage = [&]()
          {
             roaring::Roaring combined_coverage;
@@ -1918,7 +2240,6 @@ namespace ANNS
          stats.entry_group_total_coverage = total_unique_coverage;
          bool use_global_search = (total_unique_coverage > COVERAGE_THRESHOLD) ||
                                   (stats.num_lng_descendants > MIN_LNG_DESCENDANTS_THRESHOLD);
-
          stats.flag_time_ms = std::chrono::duration<double, std::milli>(
                                   std::chrono::high_resolution_clock::now() - flag_start_time)
                                   .count();
@@ -2022,8 +2343,18 @@ namespace ANNS
             else
             {
                // containment/equality场景
-               auto entry_points = get_entry_points(query_labels, num_entry_points,
-                                                    search_cache->visited_set);
+               // auto entry_points = get_entry_points(query_labels, num_entry_points,
+               //                                      search_cache->visited_set);
+
+               std::vector<IdxType> entry_points;
+               for (const auto &group_id : entry_group_ids)
+               {
+                  get_entry_points_given_group_id(num_entry_points,
+                                                  search_cache->visited_set,
+                                                  group_id,
+                                                  entry_points);
+               }
+
                if (entry_points.empty())
                {
                   stats.num_distance_calcs = 0;
@@ -2293,6 +2624,11 @@ namespace ANNS
       std::string group_entry_points_filename = index_path_prefix + "group_entry_points";
       write_1d_vector(group_entry_points_filename, _group_entry_points);
 
+      // save group id to vec ids
+      std::string group_id_to_vec_ids_filename = index_path_prefix + "group_id_to_vec_ids.dat";
+      write_2d_vectors(group_id_to_vec_ids_filename, _group_id_to_vec_ids);
+      std::cout << "group_id_to_vec_ids saved." << std::endl;
+
       // save new to old vec ids
       std::string new_to_old_vec_ids_filename = index_path_prefix + "new_to_old_vec_ids";
       write_1d_vector(new_to_old_vec_ids_filename, _new_to_old_vec_ids);
@@ -2327,6 +2663,11 @@ namespace ANNS
       // save LNG descendants
       std::string lng_descendants_filename = index_path_prefix + "lng_descendants";
       write_2d_vectors(lng_descendants_filename, _label_nav_graph->_lng_descendants);
+
+      // 保存 LNG 的核心图结构 (邻接表)
+      std::string lng_out_neighbors_filename = index_path_prefix + "lng_out_neighbors.dat";
+      write_2d_vectors(lng_out_neighbors_filename, _label_nav_graph->out_neighbors);
+      std::cout << "LNG out_neighbors saved." << std::endl; // 增加一个打印，确认保存成功
 
       // save vector attr graph data
       std::string vector_attr_graph_filename = index_path_prefix + "vector_attr_graph";
@@ -2377,6 +2718,11 @@ namespace ANNS
       std::string group_entry_points_filename = index_path_prefix + "group_entry_points";
       load_1d_vector(group_entry_points_filename, _group_entry_points);
 
+      // load group id to vec ids
+      std::string group_id_to_vec_ids_filename = index_path_prefix + "group_id_to_vec_ids.dat";
+      load_2d_vectors(group_id_to_vec_ids_filename, _group_id_to_vec_ids);
+      std::cout << "group_id_to_vec_ids loaded." << std::endl;
+
       // load new to old vec ids
       std::string new_to_old_vec_ids_filename = index_path_prefix + "new_to_old_vec_ids";
       load_1d_vector(new_to_old_vec_ids_filename, _new_to_old_vec_ids);
@@ -2419,6 +2765,11 @@ namespace ANNS
       load_2d_vectors(covered_sets_filename, _label_nav_graph->covered_sets);
       std::cout << "LNG covered_sets loaded." << std::endl;
 
+      // fxy_add: load LNG out_neighbors
+      std::string lng_out_neighbors_filename = index_path_prefix + "lng_out_neighbors.dat";
+      load_2d_vectors(lng_out_neighbors_filename, _label_nav_graph->out_neighbors);
+      std::cout << "LNG out_neighbors loaded." << std::endl;
+
       // // fxy_add: load  _lng_descendants_bits and _covered_sets_bits
       // std::string lng_descendants_bits_filename = index_path_prefix + "lng_descendants_bits";
       // load_bitset_vector(lng_descendants_bits_filename, _lng_descendants_bits);
@@ -2435,6 +2786,8 @@ namespace ANNS
       load_roaring_vector(covered_sets_rb_filename, _covered_sets_rb);
       std::cout << "_covered_sets_rb loaded." << std::endl;
 
+      std::cout << " _label_nav_graph->out_neighbors.size() = " << _label_nav_graph->out_neighbors.size() << std::endl;
+      std::cout << " _num_groups = " << _num_groups << std::endl;
       // print
       std::cout << "- Index loaded in " << std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count() << " ms" << std::endl;
    }
@@ -3270,8 +3623,6 @@ namespace ANNS
          sorted_trees.resize(top_M_trees);
       }
       std::cout << "  - 将从覆盖率最高的 " << sorted_trees.size() << " 棵概念树中生成查询。" << std::endl;
-
-      // ... [后续代码与V2版本类似，但数据源来自我们新构建的 per_tree_groups] ...
 
       // 按比例分配N个查询
       std::vector<int> query_allocations;
@@ -4299,24 +4650,80 @@ namespace ANNS
    // ===================================end：生成query task========================================
 
    // ===================================begin：“困难夹心”查询任务生成========================================
+   // fxy_add: LNG节点深度预计算
+   void UniNavGraph::_precompute_lng_node_depths()
+   {
+      std::cout << " - 正在预计算LNG节点的图深度..." << std::endl;
+      auto start_time = std::chrono::high_resolution_clock::now();
+
+      if (_num_groups == 0)
+         return;
+
+      _lng_node_depths.assign(_num_groups + 1, 0);
+      std::vector<int> in_degree(_num_groups + 1, 0);
+
+      // 1. 计算所有节点的入度
+      for (IdxType u = 1; u <= _num_groups; ++u)
+      {
+         for (IdxType v : _label_nav_graph->out_neighbors[u])
+         {
+            in_degree[v]++;
+         }
+      }
+
+      // 2. 找到所有根节点 (入度为0) 并加入队列
+      std::queue<IdxType> q;
+      for (IdxType i = 1; i <= _num_groups; ++i)
+      {
+         if (in_degree[i] == 0)
+         {
+            q.push(i);
+         }
+      }
+
+      // 3. 类似拓扑排序的BFS过程来更新深度
+      while (!q.empty())
+      {
+         IdxType u = q.front();
+         q.pop();
+
+         for (IdxType v : _label_nav_graph->out_neighbors[u])
+         {
+            // 更新子节点的深度
+            _lng_node_depths[v] = std::max(_lng_node_depths[v], _lng_node_depths[u] + 1);
+            in_degree[v]--;
+            // 如果子节点的所有父节点都已处理完毕，则将其入队
+            if (in_degree[v] == 0)
+            {
+               q.push(v);
+            }
+         }
+      }
+
+      auto end_time = std::chrono::high_resolution_clock::now();
+      std::cout << "   - 完成，耗时: " << std::chrono::duration<double, std::milli>(end_time - start_time).count() << " ms" << std::endl;
+   }
+
+   // ===================================begin：“困难夹心”查询任务生成========================================
    // fxy_add: "困难夹心"策略，生成对UNG和ACORN都具有挑战性的查询任务
    void UniNavGraph::generate_queries_hard_sandwich(
        int N,                            // 要生成的查询总数
        const std::string &output_prefix, // 输出文件路径前缀
        const std::string &dataset,       // 数据集名称
-       float parent_min_coverage_ratio,  // 父节点的最小覆盖率阈值 (例如 0.02)
-       float child_max_coverage_ratio,   // 子节点的最大覆盖率阈值 (例如 0.005)
-       float query_min_selectivity,      // 查询的最小选择率 (例如 0.0005, 即0.05%)
-       float query_max_selectivity)      // 查询的最大选择率 (例如 0.01, 即1%)
+       float parent_min_coverage_ratio,  // 父节点的最小覆盖率阈值
+       float child_max_coverage_ratio,   // 子节点的最大覆盖率阈值
+       float query_min_selectivity,      // 查询的最小选择率
+       float query_max_selectivity)      // 查询的最大选择率
    {
       std::cout << "\n========================================================" << std::endl;
       std::cout << "--- 开始生成“困难夹心”查询 (Hard Sandwich Queries) ---" << std::endl;
+      std::cout << "--- 策略: 优先从匹配向量中“图深度最深”的向量挑选查询 ---" << std::endl;
       std::cout << "========================================================" << std::endl;
 
       // --- 阶段0: 基本检查与准备 ---
-      if (_label_nav_graph == nullptr || _label_nav_graph->out_neighbors.empty())
+      if (_label_nav_graph == nullptr || _label_nav_graph->out_neighbors.empty() || _lng_node_depths.empty())
       {
-         std::cerr << "[错误] LNG未构建，无法执行“困难夹心”策略。" << std::endl;
+         std::cerr << "[错误] LNG或其深度信息未构建，请确保build()或load()后调用了_precompute_lng_node_depths()。" << std::endl;
          return;
       }
       if (_num_points == 0)
@@ -4349,7 +4756,7 @@ namespace ANNS
       struct QueryTemplate
       {
          std::vector<LabelType> labels;
-         int coverage_count;
+         std::vector<IdxType> matching_vectors;
       };
       std::vector<QueryTemplate> valid_templates;
 
@@ -4358,17 +4765,13 @@ namespace ANNS
 
          float parent_coverage = (float)_label_nav_graph->covered_sets[parent_id].size() / _num_points;
          if (parent_coverage < parent_min_coverage_ratio)
-         {
             continue;
-         }
 
          for (IdxType child_id : _label_nav_graph->out_neighbors[parent_id])
          {
             float child_coverage = (float)_label_nav_graph->covered_sets[child_id].size() / _num_points;
             if (child_coverage > child_max_coverage_ratio)
-            {
                continue;
-            }
 
             const auto &parent_labels = _group_id_to_label_set[parent_id];
             const auto &child_labels = _group_id_to_label_set[child_id];
@@ -4377,9 +4780,7 @@ namespace ANNS
                continue;
 
             std::vector<LabelType> diff_labels;
-            std::set_difference(child_labels.begin(), child_labels.end(),
-                                parent_labels.begin(), parent_labels.end(),
-                                std::back_inserter(diff_labels));
+            std::set_difference(child_labels.begin(), child_labels.end(), parent_labels.begin(), parent_labels.end(), std::back_inserter(diff_labels));
 
             if (diff_labels.empty())
                continue;
@@ -4407,6 +4808,7 @@ namespace ANNS
 
                if (!label_to_vectors_map.count(rarest_label))
                   continue;
+
                std::vector<IdxType> result_vectors = label_to_vectors_map[rarest_label];
 
                for (const auto &label : query_labels)
@@ -4420,9 +4822,7 @@ namespace ANNS
                   }
                   std::vector<IdxType> temp_intersection;
                   const auto &other_list = label_to_vectors_map[label];
-                  std::set_intersection(result_vectors.begin(), result_vectors.end(),
-                                        other_list.begin(), other_list.end(),
-                                        std::back_inserter(temp_intersection));
+                  std::set_intersection(result_vectors.begin(), result_vectors.end(), other_list.begin(), other_list.end(), std::back_inserter(temp_intersection));
                   result_vectors = std::move(temp_intersection);
                }
 
@@ -4431,12 +4831,12 @@ namespace ANNS
 
                if (selectivity >= query_min_selectivity && selectivity <= query_max_selectivity)
                {
-                  valid_templates.push_back({query_labels, coverage_count});
+                  valid_templates.push_back({query_labels, result_vectors});
                }
             }
          }
       }
-      std::cout << "\r - 扫描进度: 100.0%" << std::endl; // 清理进度条
+      std::cout << "\r - 扫描进度: 100.0%" << std::endl;
       end_time = std::chrono::high_resolution_clock::now();
       std::cout << " - 完成，找到 " << valid_templates.size() << " 个有效查询模板。耗时: "
                 << std::chrono::duration<double, std::milli>(end_time - start_time).count() << " ms" << std::endl;
@@ -4465,54 +4865,70 @@ namespace ANNS
          return;
       }
 
+      // ===> 新增：为来源组ID创建一个新文件 <===
+      std::string source_group_filename = output_prefix + "/" + dataset + "_query_source_groups.txt";
+      std::ofstream source_group_file(source_group_filename);
+      if (!source_group_file.is_open())
+      {
+         std::cerr << "[错误] 无法打开来源组ID的输出文件。" << std::endl;
+      }
+
       uint32_t dim = _base_storage->get_dim();
       std::random_device rd;
       std::mt19937 gen(rd());
       std::uniform_int_distribution<size_t> dist(0, valid_templates.size() - 1);
 
-      // --- 新增区域: 用于存储生成的查询信息以供统计 ---
       struct GeneratedQueryInfo
       {
          int id;
          int coverage_count;
          float selectivity;
+         int max_depth;
          std::vector<LabelType> labels;
       };
       std::vector<GeneratedQueryInfo> generated_queries_info;
-      // --- 结束新增 ---
-
       int queries_generated = 0;
       for (int i = 0; i < N; ++i)
       {
          const auto &T = valid_templates[dist(gen)];
+         const auto &all_matching_vectors = T.matching_vectors;
 
-         IdxType query_vec_id = -1;
-         std::vector<IdxType> matching_vectors;
-         // 这是一个简化的匹配逻辑，更高效的方式是重用阶段2的交集结果
-         // 为了代码清晰，这里重新进行一次匹配搜索
-         for (IdxType vec_idx = 0; vec_idx < _num_points; ++vec_idx)
+         if (all_matching_vectors.empty())
+            continue;
+
+         int max_depth = -1;
+         std::vector<IdxType> deepest_matching_vectors;
+
+         for (IdxType vec_idx : all_matching_vectors)
          {
-            const auto &vec_labels = _base_storage->get_label_set(vec_idx);
-            bool match = true;
-            for (const auto &required_label : T.labels)
+            IdxType group_id = _new_vec_id_to_group_id[vec_idx];
+            int current_depth = _lng_node_depths[group_id];
+
+            if (current_depth > max_depth)
             {
-               if (std::find(vec_labels.begin(), vec_labels.end(), required_label) == vec_labels.end())
-               {
-                  match = false;
-                  break;
-               }
+               max_depth = current_depth;
+               deepest_matching_vectors.clear();
+               deepest_matching_vectors.push_back(vec_idx);
             }
-            if (match)
+            else if (current_depth == max_depth)
             {
-               matching_vectors.push_back(vec_idx);
+               deepest_matching_vectors.push_back(vec_idx);
             }
          }
 
-         if (matching_vectors.empty())
+         IdxType query_vec_id = -1;
+
+         const std::vector<IdxType> *pool_to_use = &all_matching_vectors;
+         if (!deepest_matching_vectors.empty())
+         {
+            pool_to_use = &deepest_matching_vectors;
+         }
+
+         if (pool_to_use->empty())
             continue;
 
-         std::uniform_int_distribution<size_t> vec_dist(0, matching_vectors.size() - 1);
-         query_vec_id = matching_vectors[vec_dist(gen)];
+         std::uniform_int_distribution<size_t> vec_dist(0, pool_to_use->size() - 1);
+         query_vec_id = (*pool_to_use)[vec_dist(gen)];
 
          for (size_t j = 0; j < T.labels.size(); ++j)
          {
@@ -4524,24 +4940,37 @@ namespace ANNS
          fvec_file.write(reinterpret_cast<const char *>(&dim), sizeof(uint32_t));
          fvec_file.write(vec_data, dim * sizeof(float));
 
-         // --- 新增区域: 记录查询信息 ---
-         generated_queries_info.push_back({queries_generated + 1, T.coverage_count, (float)T.coverage_count / _num_points, T.labels});
-         // --- 结束新增 ---
+         // ===> 新增：获取并写入来源组ID <===
+         // query_vec_id 是 reordered ID，所以用 _new_vec_id_to_group_id
+         IdxType source_group_id = _new_vec_id_to_group_id[query_vec_id];
+         source_group_file << source_group_id << "\n";
+
+         int coverage_count = all_matching_vectors.size();
+         generated_queries_info.push_back({queries_generated + 1, coverage_count, (float)coverage_count / _num_points, max_depth, T.labels});
          queries_generated++;
       }
+      std::cout << std::endl;
 
       fvec_file.close();
       label_file.close();
+      source_group_file.close();
 
-      // --- 阶段4: 写入统计信息 (修改区域) ---
-      std::cout << "[步骤 4/4] 正在写入全面升级的统计信息..." << std::endl;
+      end_time = std::chrono::high_resolution_clock::now();
+      std::cout << " - 完成，耗时: " << std::chrono::duration<double, std::milli>(end_time - start_time).count() << " ms" << std::endl;
+
+      // --- 阶段4: 写入统计信息 ---
+      std::cout << "[步骤 4/4] 正在写入统计信息..." << std::endl;
+
       stats_file << "--- Hard Sandwich Query Generation Stats ---" << std::endl;
-      stats_file << "生成时间: " << "2025-08-02 18:09:43" << std::endl; // 示例时间
+
+      auto now = std::chrono::system_clock::now();
+      auto in_time_t = std::chrono::system_clock::to_time_t(now);
+      stats_file << "生成时间: " << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d %X") << std::endl;
+
       stats_file << "\n--- Summary ---" << std::endl;
       stats_file << "成功生成的查询总数: " << queries_generated << " / " << N << std::endl;
       stats_file << "用于生成的有效模板数: " << valid_templates.size() << std::endl;
 
-      // 计算统计指标
       if (!generated_queries_info.empty())
       {
          long long total_coverage = 0;
@@ -4557,7 +4986,7 @@ namespace ANNS
          }
          float avg_coverage = (float)total_coverage / generated_queries_info.size();
          stats_file << "\n--- Coverage Stats of Generated Queries ---" << std::endl;
-         stats_file << "最小覆盖向量数: " << min_coverage << " (" << (float)min_coverage / _num_points * 100 << "%)" << std::endl;
+         stats_file << "最小覆盖向量数: " << min_coverage << " (" << std::fixed << std::setprecision(5) << (float)min_coverage / _num_points * 100 << "%)" << std::endl;
          stats_file << "最大覆盖向量数: " << max_coverage << " (" << (float)max_coverage / _num_points * 100 << "%)" << std::endl;
          stats_file << "平均覆盖向量数: " << avg_coverage << " (" << (float)avg_coverage / _num_points * 100 << "%)" << std::endl;
       }
@@ -4569,11 +4998,12 @@ namespace ANNS
       stats_file << " - query_max_selectivity: " << query_max_selectivity << std::endl;
 
       stats_file << "\n--- Detailed Query List ---" << std::endl;
-      stats_file << "ID, CoverageCount, Selectivity(%), Labels" << std::endl;
+      stats_file << "ID, CoverageCount, Selectivity(%), MaxDepth, Labels" << std::endl;
       for (const auto &info : generated_queries_info)
       {
          stats_file << info.id << ", " << info.coverage_count << ", "
-                    << info.selectivity * 100 << ", "
+                    << std::fixed << std::setprecision(5) << info.selectivity * 100 << ", "
+                    << info.max_depth << ", "
                     << "{";
          for (size_t j = 0; j < info.labels.size(); ++j)
          {
@@ -4581,11 +5011,8 @@ namespace ANNS
          }
          stats_file << "}" << std::endl;
       }
-      // --- 结束修改 ---
-      stats_file.close();
 
-      end_time = std::chrono::high_resolution_clock::now();
-      std::cout << " - 完成，耗时: " << std::chrono::duration<double, std::milli>(end_time - start_time).count() << " ms" << std::endl;
+      stats_file.close();
 
       auto all_end_time = std::chrono::high_resolution_clock::now();
       std::cout << "\n--- “困难夹心”查询生成完毕 ---" << std::endl;
@@ -4593,7 +5020,9 @@ namespace ANNS
       std::cout << "查询向量已保存到: " << fvec_filename << std::endl;
       std::cout << "查询标签已保存到: " << label_filename << std::endl;
       std::cout << "生成统计已保存到: " << stats_filename << std::endl;
+      std::cout << "查询来源组ID已保存到: " << source_group_filename << std::endl;
       std::cout << "========================================================" << std::endl;
    }
+
    // ===================================end：“困难夹心”查询任务生成=========================================
 }

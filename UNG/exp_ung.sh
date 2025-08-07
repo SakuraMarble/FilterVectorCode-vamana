@@ -38,6 +38,7 @@ cat "$CONFIG_FILE" | jq -c '.experiments[]' | while read -r experiment; do
         --num_threads "$(echo "$experiment" | jq -r '.num_threads')" \
         --K "$(echo "$experiment" | jq -r '.K')" \
         --num_repeats "$(echo "$experiment" | jq -r '.num_repeats')" \
+        --is_select_entry_groups "$(echo "$experiment" | jq -r '.is_select_entry_groups')" \
         --generate_query "$(echo "$experiment" | jq -r '.generate_query')" \
         --generate_query_task "$(echo "$experiment" | jq -r '.generate_query_task')" \
         --method1_high_coverage_p "$(echo "$experiment" | jq -r '.method1_high_coverage_p')" \

@@ -96,34 +96,40 @@ std::vector<std::vector<faiss::idx_t>> compute_ground_truth(
    return ground_truth;
 }
 
-// Function to calculate recall
-float calculate_recall(
+// Function to calculate per-query recall and return a vector of recalls
+std::vector<float> calculate_per_query_recall(
     const std::vector<faiss::idx_t> &results_labels,
     const std::vector<std::vector<faiss::idx_t>> &ground_truth,
     size_t nq, int k)
 {
-   long long total_found = 0;
-   long long total_gt = 0;
+   std::vector<float> per_query_recalls;
+   per_query_recalls.reserve(nq);
 
    for (int i = 0; i < nq; ++i)
    {
       const auto &gt_set = ground_truth[i];
-      if (gt_set.empty())
+      size_t gt_size = gt_set.size();
+
+      if (gt_size == 0)
+      {
+         per_query_recalls.push_back(1.0f);
          continue;
+      }
 
       std::unordered_set<faiss::idx_t> gt_unordered_set(gt_set.begin(), gt_set.end());
-      total_gt += gt_set.size();
+      long long found_count = 0;
 
       for (int j = 0; j < k; ++j)
       {
          faiss::idx_t result_id = results_labels[i * k + j];
          if (gt_unordered_set.count(result_id))
          {
-            total_found++;
+            found_count++;
          }
       }
+      per_query_recalls.push_back((float)found_count / gt_size);
    }
-   return (float)total_found / total_gt;
+   return per_query_recalls;
 }
 
 int main(int argc, char *argv[])
@@ -292,8 +298,28 @@ int main(int argc, char *argv[])
       double t_gt_1 = elapsed();
       std::cout << "[" << std::fixed << std::setprecision(3) << elapsed() - t_start << " s] 真实近邻计算完成. 耗时: " << t_gt_1 - t_gt_0 << " s\n";
 
-      float recall = calculate_recall(result_labels, ground_truth, nq, k);
-      std::cout << "\n>>> 平均召回率 (Recall@" << k << "): " << std::fixed << std::setprecision(4) << recall << "\n\n";
+      // 1. Calculate recall for each query individually
+      auto per_query_recalls = calculate_per_query_recall(result_labels, ground_truth, nq, k);
+
+      double total_recall_sum = 0.0;
+      int queries_with_gt = 0;
+
+      std::cout << "\n--- 每个查询的召回率 (Recall@" << k << ") ---\n";
+      std::cout << std::fixed << std::setprecision(4);
+      for (size_t i = 0; i < per_query_recalls.size(); ++i)
+      {
+         std::cout << "Query " << std::setw(4) << i << ": " << per_query_recalls[i] << std::endl;
+         if (!ground_truth[i].empty())
+         {
+            total_recall_sum += per_query_recalls[i];
+            queries_with_gt++;
+         }
+      }
+
+      // 2. Calculate the average of the per-query recalls
+      double average_recall = (queries_with_gt > 0) ? total_recall_sum / queries_with_gt : 0.0;
+
+      std::cout << "\n>>> 平均召回率 (Macro Average Recall@" << k << "): " << average_recall << "\n\n";
    }
 
    // --- 7. Save Results ---
@@ -331,6 +357,6 @@ int main(int argc, char *argv[])
 
    // --- 8. Cleanup & Exit ---
    // No manual delete[] needed for xb and xq thanks to std::vector!
-   std::cout << "[" << std::fixed << std::setprecision(3) << elapsed() - t_start << " s] -----  任务完成  -----\n";
+   std::cout << "[" << std::fixed << std::setprecision(3) << elapsed() - t_start << " s] -----   任务完成   -----\n";
    return 0;
 }
