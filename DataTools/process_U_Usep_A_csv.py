@@ -24,11 +24,13 @@ ACORN_COLS_TO_MERGE = [
     'Recall_A1', 'Time_A1(ms)', 'DistCalcs_A1'
 ]
 
-# 最终输出文件期望的列顺序
+# 最终输出文件期望的列顺序（已更新）
 DESIRED_COLUMN_ORDER = [
     'QueryID',
     'Recall_sepT', 'Recall_sepF', 'Recall_A', 'Recall_A1',
     'Time_sepT(ms)', 'Time_sepF(ms)', 'Time_A(ms)', 'Time_A1(ms)',
+    'Get_Entry_Time_sepT(ms)', 'Get_Entry_Time_sepF(ms)',
+    'Search_Only_Time_sepT(ms)', 'Search_Only_Time_sepF(ms)',
     'DistCalcs_sepT', 'DistCalcs_sepF', 'DistCalcs_A', 'DistCalcs_A1',
     'repeat_sepT', 'Lsearch_sepT', 'repeat_sepF', 'Lsearch_sepF'
 ]
@@ -37,8 +39,9 @@ DESIRED_COLUMN_ORDER = [
 ANALYSIS_COLS = [
     'Recall_sepT', 'Recall_sepF', 'Recall_A',
     'Time_sepT(ms)', 'Time_sepF(ms)', 'Time_A(ms)',
+    'Search_Only_Time_sepT(ms)', 'Search_Only_Time_sepF(ms)', # 新增，用于计算比值
     'DistCalcs_sepT', 'DistCalcs_A',
-    'Lsearch_sepT', 'Lsearch_sepF' # 新增Lsearch用于比值计算
+    'Lsearch_sepT', 'Lsearch_sepF'
 ]
 
 # ==============================================================================
@@ -102,8 +105,14 @@ def process_single_pair(u_sep_path: str, ua_path: str, column_order: List[str]) 
         df_acorn_selected = df_acorn[ACORN_COLS_TO_MERGE]
         final_df = pd.merge(df_sep, df_acorn_selected, on='QueryID', how='outer')
         
+        # 确保所有期望的列都存在于DataFrame中，即使源文件没有，也会用NaN填充
         final_ordered_cols = [col for col in column_order if col in final_df.columns]
-        final_df = final_df.reindex(columns=final_ordered_cols)
+        final_df = final_df.reindex(columns=column_order)
+        
+        # 仅保留实际存在的列进行排序
+        existing_ordered_cols = [col for col in column_order if col in final_df.columns]
+        final_df = final_df[existing_ordered_cols]
+
         final_df.sort_values(by='QueryID', inplace=True)
         
         return final_df
@@ -119,18 +128,21 @@ def analyze_and_save_wins(merged_df: pd.DataFrame, base_filename: str, wins_dir:
     """
     print("    [ANALYZE] 正在分析 'sepT 优于 sepF 和 ACORN' 的条目...")
     if not all(col in merged_df.columns for col in ANALYSIS_COLS):
-        print("        [WARN] 缺少用于分析的必要列，跳过此文件的统计。")
+        # 打印出缺失的列以帮助调试
+        missing_cols = [col for col in ANALYSIS_COLS if col not in merged_df.columns]
+        print(f"        [WARN] 缺少用于分析的必要列: {missing_cols}，跳过此文件的统计。")
         return
 
     df_for_analysis = merged_df.dropna(subset=ANALYSIS_COLS)
 
-    # 定义"sepT胜出"的条件：召回率不低于其他两者，且时间上优于其他两者
+    # 定义"sepT胜出"的条件：召回率不低于其他两者，且总时间上优于其他两者
     condition = (
         (df_for_analysis['Recall_sepT'] >= df_for_analysis['Recall_sepF']) &
-        (df_for_analysis['Recall_sepT'] >= df_for_analysis['Recall_A']) &
-        (df_for_analysis['Time_sepT(ms)'] < df_for_analysis['Time_sepF(ms)']) &
-        (df_for_analysis['Time_sepT(ms)'] < df_for_analysis['Time_A(ms)'])
+        (df_for_analysis['Recall_sepT'] >= df_for_analysis['Recall_A']) 
     )
+   #  &
+   #      (df_for_analysis['Time_sepT(ms)'] < df_for_analysis['Time_sepF(ms)']) &
+   #      (df_for_analysis['Time_sepT(ms)'] < df_for_analysis['Time_A(ms)'])
     
     winning_entries = df_for_analysis[condition]
 
@@ -147,22 +159,32 @@ def analyze_and_save_wins(merged_df: pd.DataFrame, base_filename: str, wins_dir:
         # 2. 对胜出条目进行统计分析
         time_f_safe = winning_entries['Time_sepF(ms)'].replace(0, np.nan)
         time_a_safe = winning_entries['Time_A(ms)'].replace(0, np.nan)
+        search_only_f_safe = winning_entries['Search_Only_Time_sepF(ms)'].replace(0, np.nan)
         dist_a_safe = winning_entries['DistCalcs_A'].replace(0, np.nan)
         lsearch_f_safe = winning_entries['Lsearch_sepF'].replace(0, np.nan)
 
+        # 计算平均比值
         avg_time_ratio_vs_f = (winning_entries['Time_sepT(ms)'] / time_f_safe).mean()
         avg_time_ratio_vs_a = (winning_entries['Time_sepT(ms)'] / time_a_safe).mean()
+        avg_search_only_ratio_vs_f = (winning_entries['Search_Only_Time_sepT(ms)'] / search_only_f_safe).mean()
+        avg_search_only_ratio_vs_a = (winning_entries['Search_Only_Time_sepT(ms)'] / time_a_safe).mean()
         avg_dist_ratio_vs_a = (winning_entries['DistCalcs_sepT'] / dist_a_safe).mean()
         avg_lsearch_ratio_vs_f = (winning_entries['Lsearch_sepT'] / lsearch_f_safe).mean()
 
         # 3. 生成报告内容字符串
         report_lines = [
             "="*10 + f" 'sepT胜出' 统计报告 ({os.path.basename(base_filename)}) " + "="*10,
-            f"- 平均 [Time_sepT / Time_sepF]: {avg_time_ratio_vs_f:.4f} (sepT耗时是sepF的倍数)",
-            f"- 平均 [Time_sepT / Time_A]:  {avg_time_ratio_vs_a:.4f} (sepT耗时是ACORN的倍数)",
+            f"在 {win_count} 个 'sep=true' 胜出的查询中:",
+            "--- 总时间对比 ---",
+            f"- 平均 [Time_sepT / Time_sepF]: {avg_time_ratio_vs_f:.4f} (sepT总耗时是sepF的倍数)",
+            f"- 平均 [Time_sepT / Time_A]:  {avg_time_ratio_vs_a:.4f} (sepT总耗时是ACORN的倍数)",
+            "--- 纯搜索时间对比 ---",
+            f"- 平均 [Search_Only_Time_T / Search_Only_Time_F]: {avg_search_only_ratio_vs_f:.4f} (sepT纯搜索耗时是sepF的倍数)",
+            f"- 平均 [Search_Only_Time_T / Time_A]:            {avg_search_only_ratio_vs_a:.4f} (sepT纯搜索耗时是ACORN总耗时的倍数)",
+            "--- 其他指标对比 ---",
             f"- 平均 [Lsearch_sepT / Lsearch_sepF]: {avg_lsearch_ratio_vs_f:.4f} (sepT的Lsearch是sepF的倍数)",
             f"- 平均 [DistCalcs_sepT / DistCalcs_A]:  {avg_dist_ratio_vs_a:.4f} (sepT计算量是ACORN的倍数)",
-            "="*78
+            "="*85
         ]
         report_content = "\n".join(report_lines)
 

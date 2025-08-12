@@ -1,17 +1,31 @@
 {
    "experiments": [
       {
-         "dataset": "celeba",
-         "N": 202599,
+         "dataset": "amazing_file",
+         "N": 397251,
          "M": 32,
          "M_beta": 64,
          "gamma": 80,
-         "query_num": 10,
+         "query_num": 11,
          "threads": 32,
          "efs_start": 50,
-         "efs_end": 250,
+         "efs_end": 500,
          "efs_step": 50,
-         "repeat_num": 2,
+         "repeat_num": 3,
+         "if_bfs_filter": true
+      },
+      {
+         "dataset": "app_reviews",
+         "N": 288065,
+         "M": 32,
+         "M_beta": 64,
+         "gamma": 80,
+         "query_num": 11,
+         "threads": 32,
+         "efs_start": 200,
+         "efs_end": 2000,
+         "efs_step": 200,
+         "repeat_num": 3,
          "if_bfs_filter": true
       }
    ]

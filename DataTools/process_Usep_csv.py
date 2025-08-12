@@ -21,10 +21,10 @@ def find_optimal_performance_per_query(df, recall_col, time_col, dist_calcs_col)
         return pd.DataFrame()
 
     # 确保所需列存在
-    for col in [recall_col, time_col, dist_calcs_col, 'QueryID', 'repeat', 'Lsearch']:
+    cols_to_check = [recall_col, time_col, dist_calcs_col, 'QueryID', 'repeat', 'Lsearch', 'get_entry_group_start_time(ms)']
+    for col in cols_to_check:
         if col not in df.columns:
-            print(f"[WARN] 列 '{col}' 在DataFrame中不存在。")
-            # 可以选择返回空DataFrame或用默认值填充
+            print(f"[WARN] 关键列 '{col}' 在DataFrame中不存在，跳过此文件。")
             return pd.DataFrame()
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
@@ -56,7 +56,7 @@ def find_optimal_performance_per_query(df, recall_col, time_col, dist_calcs_col)
 def process_matched_sep_pair(sepfalse_csv_path, septrue_csv_path):
     """
     处理一对匹配好的 UNG CSV 文件（sep=false 和 sep=true）。
-    现在会额外提取 repeat 和 Lsearch。
+    现在会额外提取和计算时间相关的列。
     """
     try:
         # --- 1. 处理 sep=false 文件 ---
@@ -67,14 +67,17 @@ def process_matched_sep_pair(sepfalse_csv_path, septrue_csv_path):
         )
         
         # 定义需要提取的列和重命名的映射关系
-        cols_to_select_f = ['QueryID', 'repeat', 'Lsearch', 'Recall', 'UNG_time(ms)', 'DistanceCalcs']
+        cols_to_select_f = ['QueryID', 'repeat', 'Lsearch', 'Recall', 'UNG_time(ms)', 'DistanceCalcs', 'get_entry_group_start_time(ms)', 'Search_Only_Time']
         rename_map_f = {
             'repeat': 'repeat_sepF', 'Lsearch': 'Lsearch_sepF',
-            'Recall': 'Recall_sepF', 'UNG_time(ms)': 'Time_sepF(ms)', 'DistanceCalcs': 'DistCalcs_sepF'
+            'Recall': 'Recall_sepF', 'UNG_time(ms)': 'Time_sepF(ms)', 'DistanceCalcs': 'DistCalcs_sepF',
+            'get_entry_group_start_time(ms)': 'Get_Entry_Time_sepF(ms)',
+            'Search_Only_Time': 'Search_Only_Time_sepF(ms)'
         }
         
-        # 在DataFrame非空时，提取并重命名列
         if not optimal_false.empty:
+            # 新增计算：纯搜索时间 = UNG总时间 - 获取入口点组的时间
+            optimal_false['Search_Only_Time'] = optimal_false['UNG_time(ms)'] - optimal_false['get_entry_group_start_time(ms)']
             final_false = optimal_false[cols_to_select_f].rename(columns=rename_map_f)
         else:
             final_false = pd.DataFrame(columns=['QueryID'] + list(rename_map_f.values()))
@@ -86,13 +89,16 @@ def process_matched_sep_pair(sepfalse_csv_path, septrue_csv_path):
             df_true, 'Recall', 'UNG_time(ms)', 'DistanceCalcs'
         )
 
-        cols_to_select_t = ['QueryID', 'repeat', 'Lsearch', 'Recall', 'UNG_time(ms)', 'DistanceCalcs']
+        cols_to_select_t = ['QueryID', 'repeat', 'Lsearch', 'Recall', 'UNG_time(ms)', 'DistanceCalcs', 'get_entry_group_start_time(ms)', 'Search_Only_Time']
         rename_map_t = {
             'repeat': 'repeat_sepT', 'Lsearch': 'Lsearch_sepT',
-            'Recall': 'Recall_sepT', 'UNG_time(ms)': 'Time_sepT(ms)', 'DistanceCalcs': 'DistCalcs_sepT'
+            'Recall': 'Recall_sepT', 'UNG_time(ms)': 'Time_sepT(ms)', 'DistanceCalcs': 'DistCalcs_sepT',
+            'get_entry_group_start_time(ms)': 'Get_Entry_Time_sepT(ms)',
+            'Search_Only_Time': 'Search_Only_Time_sepT(ms)'
         }
         
         if not optimal_true.empty:
+            optimal_true['Search_Only_Time'] = optimal_true['UNG_time(ms)'] - optimal_true['get_entry_group_start_time(ms)']
             final_true = optimal_true[cols_to_select_t].rename(columns=rename_map_t)
         else:
             final_true = pd.DataFrame(columns=['QueryID'] + list(rename_map_t.values()))
@@ -101,7 +107,6 @@ def process_matched_sep_pair(sepfalse_csv_path, septrue_csv_path):
         if final_false.empty and final_true.empty:
             return None
 
-        # 确保 QueryID 是可用于合并的兼容类型
         if 'QueryID' in final_false.columns:
             final_false['QueryID'] = final_false['QueryID'].astype(int)
         if 'QueryID' in final_true.columns:
@@ -110,12 +115,10 @@ def process_matched_sep_pair(sepfalse_csv_path, septrue_csv_path):
         merged_df = pd.merge(final_false, final_true, on='QueryID', how='outer')
 
         if 'QueryID' in merged_df.columns:
-            # 将QueryID放到第一列，并按其排序
             cols = ['QueryID'] + [col for col in merged_df.columns if col != 'QueryID']
             merged_df = merged_df[cols]
             merged_df.sort_values(by='QueryID', inplace=True)
             merged_df['QueryID'] = merged_df['QueryID'].astype(int)
-
 
         return merged_df
 
@@ -142,7 +145,6 @@ def main():
         print(f"[ERROR] 找不到UNG数据集目录: {ung_base_dir}")
         return
 
-    # 查找所有 'sepfalse' 实验目录，以此为基准进行匹配
     sepfalse_dirs = glob.glob(os.path.join(ung_base_dir, f'*_sepfalse_*'))
     print(f"[INFO] 找到 {len(sepfalse_dirs)} 个 'sep=false' 实验，开始查找匹配的 'sep=true' 对...")
 
@@ -151,7 +153,6 @@ def main():
         dir_name = os.path.basename(sepfalse_dir_path)
         print(f"\n[BASE] 找到基准实验: {dir_name}")
 
-        # 构建对应的 'septrue' 目录名和路径
         septrue_dir_name = dir_name.replace('_sepfalse_', '_septrue_')
         septrue_dir_path = os.path.join(ung_base_dir, septrue_dir_name)
 
@@ -163,7 +164,6 @@ def main():
 
         print(f"  [SUCCESS] 成功找到匹配对。")
 
-        # 在每个目录中查找结果CSV文件
         sepfalse_csv_path = next(iter(glob.glob(os.path.join(sepfalse_dir_path, 'results', 'query_details_repeat*.csv'))), None)
         septrue_csv_path = next(iter(glob.glob(os.path.join(septrue_dir_path, 'results', 'query_details_repeat*.csv'))), None)
 
@@ -180,7 +180,6 @@ def main():
         final_merged_df = process_matched_sep_pair(sepfalse_csv_path, septrue_csv_path)
 
         if final_merged_df is not None and not final_merged_df.empty:
-            # 根据基准目录名（sepfalse）创建一个描述性的输出文件名
             output_filename_base = os.path.basename(sepfalse_dir_path).replace('_sepfalse', '')
             output_filename = f"U_sepF_T_{output_filename_base}.csv"
             output_path = os.path.join(OUTPUT_DIR, output_filename)

@@ -22,9 +22,10 @@ namespace ANNS
       float recall;
       double time_ms;
       double flag_time_ms;
-      double descendants_merge_time_ms; // descendants合并耗时
-      double coverage_merge_time_ms;    // coverage合并耗时
-      double get_group_entry_time_ms;   // 计算入口点耗时
+      double descendants_merge_time_ms;  // descendants合并耗时
+      double coverage_merge_time_ms;     // coverage合并耗时
+      double get_min_super_sets_time_ms; // 获取最小入口集合耗时
+      double get_group_entry_time_ms;    // 计算入口点耗时
       double entry_group_total_coverage;
       size_t num_distance_calcs;
       size_t num_entry_points;
@@ -201,6 +202,14 @@ namespace ANNS
       std::shared_ptr<LabelNavGraph> _label_nav_graph = nullptr;
       void get_min_super_sets(const std::vector<LabelType> &query_label_set, std::vector<IdxType> &min_super_set_ids,
                               bool avoid_self = false, bool need_containment = true);
+      void get_min_super_sets_pruning(const std::vector<LabelType> &query_label_set, std::vector<IdxType> &min_super_set_ids,
+                                      bool avoid_self, bool need_containment);
+      void get_min_super_sets_roaring(const std::vector<LabelType> &query_label_set, std::vector<IdxType> &min_super_set_ids,
+                                      bool avoid_self = false, bool need_containment = true);
+      void get_min_super_sets_debug(const std::vector<LabelType> &query_label_set,
+                                    std::vector<IdxType> &min_super_set_ids,
+                                    bool avoid_self, bool need_containment,
+                                    std::atomic<int> &print_counter, bool is_new_trie_method);
       void cal_f_coverage_ratio();
       void build_label_nav_graph();
       size_t count_all_descendants(IdxType group_id) const;

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-IS_BUILD_AND_GT="true"
+IS_BUILD_AND_GT="false"
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd ) # Get the absolute path of the script's directory
 
@@ -41,9 +41,9 @@ cd .. || exit
 
 # Step3.5: Construct the output directory path with Lsearch parameters
 if [[ "$UNG_AND_ACORN" == "false" ]]; then
-    OUTPUT_DIR="${OUTPUT_DIR}/UNG/${DATASET}/${DATASET}_query${NUM_QUERY_SETS}_sep${IS_SELECT_ENTRY_GROUPS}_th${NUM_THREADS}_M${MAX_DEGREE}_LB${LBUILD}_alpha${ALPHA}_C${NUM_CROSS_EDGES}_EP${NUM_ENTRY_POINTS}_Ls${LSEARCH_START}_Le${LSEARCH_END}_Lp${LSEARCH_STEP}_REPEATs${NUM_REPEATS}"
+    OUTPUT_DIR="${OUTPUT_DIR}/UNG/${DATASET}/${DATASET}_query${NUM_QUERY_SETS}_sep${IS_NEW_TRIE_METHOD}_th${NUM_THREADS}_M${MAX_DEGREE}_LB${LBUILD}_alpha${ALPHA}_C${NUM_CROSS_EDGES}_EP${NUM_ENTRY_POINTS}_Ls${LSEARCH_START}_Le${LSEARCH_END}_Lp${LSEARCH_STEP}_REPEATs${NUM_REPEATS}"
 elif [[ "$UNG_AND_ACORN" == "true" ]]; then
-    OUTPUT_DIR="${OUTPUT_DIR}/UNG+ACORN/${DATASET}/${DATASET}_query${NUM_QUERY_SETS}_sep${IS_SELECT_ENTRY_GROUPS}_th${NUM_THREADS}_${NEW_EDGE_POLICY}_aefs${EFS}_R${R_IN_ADD_NEW_EDGE}_W${W_in_add_new_edge}_M${M_IN_ADD_NEW_EDGE}_l${LAYER_DEPTH_RETIO}_q${QUERY_VECTOR_RATIO}_r${ROOT_COVERAGE_THRESHOLD}_M${MAX_DEGREE}_LB${LBUILD}_alpha${ALPHA}_C${NUM_CROSS_EDGES}_EP${NUM_ENTRY_POINTS}_Ls${LSEARCH_START}_Le${LSEARCH_END}_Lp${LSEARCH_STEP}_REPEATs${NUM_REPEATS}"
+    OUTPUT_DIR="${OUTPUT_DIR}/UNG+ACORN/${DATASET}/${DATASET}_query${NUM_QUERY_SETS}_sep${IS_NEW_TRIE_METHOD}_th${NUM_THREADS}_${NEW_EDGE_POLICY}_aefs${EFS}_R${R_IN_ADD_NEW_EDGE}_W${W_in_add_new_edge}_M${M_IN_ADD_NEW_EDGE}_l${LAYER_DEPTH_RETIO}_q${QUERY_VECTOR_RATIO}_r${ROOT_COVERAGE_THRESHOLD}_M${MAX_DEGREE}_LB${LBUILD}_alpha${ALPHA}_C${NUM_CROSS_EDGES}_EP${NUM_ENTRY_POINTS}_Ls${LSEARCH_START}_Le${LSEARCH_END}_Lp${LSEARCH_STEP}_REPEATs${NUM_REPEATS}"
     ACORN_IN_UNG_OUTPUT_DIR="$OUTPUT_DIR/acorn_in_ung_output"
     mkdir -p "$ACORN_IN_UNG_OUTPUT_DIR"
 else
@@ -123,7 +123,7 @@ do
     echo -e "\nRunning query$i..."
     QUERY_DIR="$DATA_DIR/query_${NUM_QUERY_SETS}"
     "$BUILD_DIR"/apps/search_UNG_index \
-        --data_type float --dist_fn L2 --num_threads "$NUM_THREADS" --K "$K" --is_new_method true --is_ori_ung true  --is_select_entry_groups "$IS_SELECT_ENTRY_GROUPS"  --num_repeats "$NUM_REPEATS" \
+        --data_type float --dist_fn L2 --num_threads "$NUM_THREADS" --K "$K" --is_new_method true --is_ori_ung true  --is_new_trie_method "$IS_NEW_TRIE_METHOD"  --num_repeats "$NUM_REPEATS" \
         --base_bin_file "$DATA_DIR/${DATASET}_base.bin" \
         --base_label_file "$DATA_DIR/base_${NUM_QUERY_SETS}/${DATASET}_base_labels.txt" \
         --query_bin_file "$QUERY_DIR/${DATASET}_query.bin" \

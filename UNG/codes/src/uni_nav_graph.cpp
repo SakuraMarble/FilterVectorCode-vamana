@@ -22,6 +22,7 @@
 #include <bitset>
 #include <boost/dynamic_bitset.hpp>
 #include <iomanip>
+#include <atomic> // 引入原子操作头文件
 
 #include "utils.h"
 #include "vamana/vamana.h"
@@ -164,7 +165,7 @@ namespace ANNS
 
       // obtain the candidates
       std::vector<std::shared_ptr<TrieNode>> candidates;
-      _trie_index.get_super_set_entrances(query_label_set, candidates, avoid_self, need_containment);
+      _trie_index.get_super_set_entrances(query_label_set, candidates, avoid_self, need_containment); // 搜索候选超集
 
       // special cases
       if (candidates.empty())
@@ -176,6 +177,7 @@ namespace ANNS
       }
 
       // obtain the minimum size
+      // 所有candidates 按照其标签集的尺寸 label_set_size 从小到大排序
       std::sort(candidates.begin(), candidates.end(),
                 [](const std::shared_ptr<TrieNode> &a, const std::shared_ptr<TrieNode> &b)
                 {
@@ -210,6 +212,104 @@ namespace ANNS
       }
    }
 
+   void UniNavGraph::get_min_super_sets_debug(const std::vector<LabelType> &query_label_set,
+                                              std::vector<IdxType> &min_super_set_ids,
+                                              bool avoid_self, bool need_containment,
+                                              std::atomic<int> &print_counter, bool is_new_trie_method)
+   {
+      // --- 计时器变量定义 ---
+      double time_trie_lookup = 0.0;
+      double time_sorting = 0.0;
+      double time_filtering_loop = 0.0;
+
+      auto function_start_time = std::chrono::high_resolution_clock::now();
+
+      min_super_set_ids.clear();
+
+      // --- 1. 测量Trie查找候选者的时间 ---
+      auto start_trie = std::chrono::high_resolution_clock::now();
+      std::vector<std::shared_ptr<TrieNode>> candidates;
+      if (is_new_trie_method)
+         _trie_index.get_super_set_entrances_new_debug(query_label_set, candidates, avoid_self, need_containment, print_counter);
+      else
+         _trie_index.get_super_set_entrances_debug(query_label_set, candidates, avoid_self, need_containment, print_counter);
+      auto end_trie = std::chrono::high_resolution_clock::now();
+      time_trie_lookup = std::chrono::duration<double, std::milli>(end_trie - start_trie).count();
+
+      // 特殊情况处理
+      if (candidates.empty())
+      {
+         std::cout << "No candidates found for the given query label set." << std::endl;
+         return;
+      }
+      if (candidates.size() == 1)
+      {
+         std::cout << "Only one candidate found. Returning it as the minimal super set." << std::endl;
+         min_super_set_ids.emplace_back(candidates[0]->group_id);
+         return;
+      }
+
+      // --- 2. 测量排序时间 ---
+      auto start_sort = std::chrono::high_resolution_clock::now();
+      std::sort(candidates.begin(), candidates.end(),
+                [](const std::shared_ptr<TrieNode> &a, const std::shared_ptr<TrieNode> &b)
+                {
+                   return a->label_set_size < b->label_set_size;
+                });
+      auto end_sort = std::chrono::high_resolution_clock::now();
+      time_sorting = std::chrono::duration<double, std::milli>(end_sort - start_sort).count();
+
+      auto min_size = _group_id_to_label_set[candidates[0]->group_id].size();
+
+      // --- 3. 测量过滤循环的时间 ---
+      auto start_filter = std::chrono::high_resolution_clock::now();
+      for (auto candidate : candidates)
+      {
+         const auto &cur_group_id = candidate->group_id;
+         const auto &cur_label_set = _group_id_to_label_set[cur_group_id];
+         bool is_min = true;
+
+         if (cur_label_set.size() > min_size)
+         {
+            for (auto min_group_id : min_super_set_ids)
+            {
+               const auto &min_label_set = _group_id_to_label_set[min_group_id];
+               if (std::includes(cur_label_set.begin(), cur_label_set.end(), min_label_set.begin(), min_label_set.end()))
+               {
+                  is_min = false;
+                  break;
+               }
+            }
+         }
+
+         if (is_min)
+         {
+            min_super_set_ids.emplace_back(cur_group_id);
+         }
+      }
+      auto end_filter = std::chrono::high_resolution_clock::now();
+      time_filtering_loop = std::chrono::duration<double, std::milli>(end_filter - start_filter).count();
+
+      auto function_total_time = std::chrono::duration<double, std::milli>(end_filter - function_start_time).count();
+
+      /*// --- 4. 使用原子计数器控制打印次数 ---
+      // fetch_add(1) 会原子地将计数器加1，并返回增加前的值。所以这个条件对于前10次调用 (0到9) 会成立。
+      if (print_counter.fetch_add(1) < 10)
+      {
+// 使用 #pragma omp critical 来防止多线程输出混乱
+#pragma omp critical
+         {
+            std::cout << "--- get_min_super_sets Performance Analysis---\n"
+                      << "  - Trie查找总耗时: " << time_trie_lookup << " ms\n"
+                      << "  - 排序耗时:       " << time_sorting << " ms\n"
+                      << "  - 过滤循环耗时:   " << time_filtering_loop << " ms\n"
+                      << "Total Function Time: " << function_total_time << " ms\n"
+                      << "-----------------------------------------------------------\n"
+                      << std::endl;
+         }
+      }*/
+   }
+
    // 为了方便排序，定义一个结构体来存储候选组及其评分
    struct ScoredCandidate
    {
@@ -223,46 +323,33 @@ namespace ANNS
       }
    };
 
-   std::vector<IdxType> UniNavGraph::select_entry_groups(
-       const std::vector<IdxType> &minimum_entry_sets,
-       SelectionMode mode,
+   std::vector<ANNS::IdxType> UniNavGraph::select_entry_groups(
+       const std::vector<ANNS::IdxType> &minimum_entry_sets,
+       ANNS::SelectionMode mode,
        size_t top_k,
        double beta,
-       IdxType true_query_group_id) const
+       ANNS::IdxType true_query_group_id) const
    {
-      std::cout << "\n[select_entry_groups] 启动..." << std::endl;
-      std::cout << " - 初始最小入口组 (" << minimum_entry_sets.size() << "个): { ";
-      for (size_t i = 0; i < minimum_entry_sets.size(); ++i)
-         std::cout << minimum_entry_sets[i] << (i == minimum_entry_sets.size() - 1 ? "" : ", ");
-      std::cout << " }" << std::endl;
-      std::cout << " - 期望额外选择 top_k: " << top_k << std::endl;
-      if (true_query_group_id > 0)
-      {
-         std::cout << " - 接收到真实来源组 (Oracle Group): " << true_query_group_id << std::endl;
-      }
-      else
-      {
-         std::cout << " - 未提供真实来源组。" << std::endl;
-      }
-
+      bool verbose = false;
       assert(_label_nav_graph != nullptr && "Error: _label_nav_graph should not be null.");
 
       if (top_k == 0 && true_query_group_id == 0)
       {
-         std::cout << "[select_entry_groups] 无需选择，直接返回初始组。" << std::endl;
          return minimum_entry_sets;
       }
       if (minimum_entry_sets.empty() && true_query_group_id == 0)
       {
-         std::cout << "[select_entry_groups] 无有效入口，返回空。" << std::endl;
          return {};
       }
 
-      // --- 步骤 1: 运行BFS ---
-      // [LOG]
-      std::cout << "[Step 1] 开始从初始组进行BFS以计算距离..." << std::endl;
-      std::queue<IdxType> q;
+      // --- 步骤 1: 运行BFS，并收集所有可达的候选节点 ---
+      std::queue<ANNS::IdxType> q;
       std::vector<int> lng_distance(_num_groups + 1, -1);
+
+      // === 核心优化 1: 创建一个容器，仅用于存储BFS访问过的、距离大于0的节点 ===
+      std::vector<ANNS::IdxType> reachable_nodes;
+      reachable_nodes.reserve(_num_groups / 10); // 预分配一些内存，避免多次重分配
+
       for (const auto &group_id : minimum_entry_sets)
       {
          if (group_id > 0 && group_id <= _num_groups && lng_distance[group_id] == -1)
@@ -271,88 +358,81 @@ namespace ANNS
             lng_distance[group_id] = 0;
          }
       }
-      int visited_count = q.size();
+
       while (!q.empty())
       {
-         IdxType current_group = q.front();
+         ANNS::IdxType current_group = q.front();
          q.pop();
+
          if (current_group >= _label_nav_graph->out_neighbors.size())
             continue;
+
          for (const auto &child_group : _label_nav_graph->out_neighbors[current_group])
          {
             if (child_group > 0 && child_group <= _num_groups && lng_distance[child_group] == -1)
             {
                lng_distance[child_group] = lng_distance[current_group] + 1;
                q.push(child_group);
-               visited_count++;
+               // === 核心优化 2: 将新发现的候选节点存入列表 ===
+               reachable_nodes.push_back(child_group);
             }
          }
       }
-      std::cout << " - BFS 完成。共访问 " << visited_count << " 个组。" << std::endl;
 
-      // --- 步骤 2: 收集和评分候选人 ---
-      std::cout << "[Step 2] 正在为所有后代组评分..." << std::endl;
-      std::vector<ScoredCandidate> candidates;
-      for (IdxType group_id = 1; group_id <= _num_groups; ++group_id)
+      // --- 步骤 2: 仅对可达节点进行评分 ---
+      std::vector<ANNS::ScoredCandidate> candidates;
+      candidates.reserve(reachable_nodes.size());
+
+      // === 核心优化 3: 直接遍历数量少得多的 reachable_nodes 列表 ===
+      for (const auto group_id : reachable_nodes)
       {
-         if (lng_distance[group_id] > 0)
+         const double group_size = static_cast<double>(_group_id_to_vec_ids[group_id].size());
+         double score = 0.0;
+         if (mode == ANNS::SelectionMode::SizeOnly)
          {
-            const double group_size = static_cast<double>(_group_id_to_vec_ids[group_id].size());
-            double score = 0.0;
-            if (mode == SelectionMode::SizeOnly)
-            {
-               score = group_size;
-            }
-            else
-            { // SizeAndDistance
-               const double dist = static_cast<double>(lng_distance[group_id]);
-               score = group_size * std::log(1.0 + beta * dist) + 1e-9;
-            }
-            if (score > 0)
-            {
-               candidates.push_back({score, group_id});
-            }
+            score = group_size;
          }
+         else
+         { // SizeAndDistance with new formula
+            const int dist = lng_distance[group_id];
+            // 新评分公式: 深度优先，大小作为次要排序依据
+            score = static_cast<double>(dist) * static_cast<double>(_num_points) + group_size;
+         }
+         candidates.push_back({score, group_id});
       }
-      std::cout << " - 评分完成。找到 " << candidates.size() << " 个有效的候选入口组。" << std::endl;
 
-      // --- 步骤 3: 排序并选择 ---
-      std::cout << "[Step 3] 正在排序并选择最终的入口组..." << std::endl;
-      std::sort(candidates.begin(), candidates.end());
-
-      //  打印评分最高的几个候选组
-      size_t top_n_to_show = std::min((size_t)5, candidates.size());
-      if (top_n_to_show > 0)
+      // --- 步骤 3: 部分排序并选择 ---
+      size_t num_to_sort = std::min(candidates.size(), top_k + 5); // +5 作为安全缓冲
+      if (num_to_sort > 0)
       {
-         std::cout << " - 评分最高的 " << top_n_to_show << " 个候选组：" << std::endl;
-         for (size_t i = 0; i < top_n_to_show; ++i)
-         {
-            std::cout << "   - Rank " << i + 1 << ": Group " << candidates[i].group_id
-                      << ", Score: " << std::fixed << std::setprecision(2) << candidates[i].score << std::endl;
-         }
+         std::partial_sort(candidates.begin(),
+                           candidates.begin() + num_to_sort,
+                           candidates.end());
       }
 
-      std::vector<IdxType> final_entry_groups = minimum_entry_sets;
-      std::unordered_set<IdxType> existing_groups(minimum_entry_sets.begin(), minimum_entry_sets.end());
+      std::vector<ANNS::IdxType> final_entry_groups = minimum_entry_sets;
+      std::unordered_set<ANNS::IdxType> existing_groups(minimum_entry_sets.begin(), minimum_entry_sets.end());
 
-      // =======================> 核心修改逻辑 + 日志 <=======================
+      bool oracle_injected = false;
+      bool oracle_existed = false;
+
       if (true_query_group_id > 0 && true_query_group_id <= _num_groups)
       {
          if (existing_groups.find(true_query_group_id) == existing_groups.end())
          {
             final_entry_groups.push_back(true_query_group_id);
             existing_groups.insert(true_query_group_id);
-            std::cout << " - [注入成功] 已将真实来源组 " << true_query_group_id << " 添加到入口列表。" << std::endl;
+            oracle_injected = true;
          }
          else
          {
-            std::cout << " - [注入提示] 真实来源组 " << true_query_group_id << " 已存在于初始列表中。" << std::endl;
+            oracle_existed = true;
          }
       }
-      // =======================> 修改结束 <=======================
 
-      for (const auto &candidate : candidates)
+      for (size_t i = 0; i < num_to_sort; ++i)
       {
+         const auto &candidate = candidates[i];
          if (final_entry_groups.size() >= minimum_entry_sets.size() + top_k)
          {
             break;
@@ -361,16 +441,29 @@ namespace ANNS
          {
             final_entry_groups.push_back(candidate.group_id);
             existing_groups.insert(candidate.group_id);
-            std::cout << "   -> 添加候选组: " << candidate.group_id
-                      << " (Score: " << std::fixed << std::setprecision(2) << candidate.score << ")" << std::endl;
          }
       }
 
-      std::cout << "[select_entry_groups] 完成。" << std::endl;
-      std::cout << " - 最终选定入口组 (" << final_entry_groups.size() << "个): { ";
-      for (size_t i = 0; i < final_entry_groups.size(); ++i)
-         std::cout << final_entry_groups[i] << (i == final_entry_groups.size() - 1 ? "" : ", ");
-      std::cout << " }" << std::endl;
+      // --- 精简后的日志输出 ---
+      if (verbose)
+      {
+         if (oracle_injected)
+         {
+            std::cout << "[Info] Oracle group " << true_query_group_id << " was successfully injected." << std::endl;
+         }
+         else if (oracle_existed && true_query_group_id > 0)
+         {
+            std::cout << "[Info] Oracle group " << true_query_group_id << " was already in the initial set." << std::endl;
+         }
+
+         size_t added_count = final_entry_groups.size() > minimum_entry_sets.size() ? final_entry_groups.size() - minimum_entry_sets.size() : 0;
+         if (oracle_injected)
+            added_count--;
+
+         std::cout << "[Info] Final selected entry groups count: " << final_entry_groups.size()
+                   << " (Initial: " << minimum_entry_sets.size()
+                   << ", Heuristically Added: " << added_count << ")" << std::endl;
+      }
 
       return final_entry_groups;
    }
@@ -2127,7 +2220,7 @@ namespace ANNS
                                    std::vector<QueryStats> &query_stats,
                                    std::vector<std::bitset<10000001>> &bitmaps,
                                    bool is_ori_ung,
-                                   bool is_select_entry_groups,
+                                   bool is_new_trie_method,
                                    const std::vector<IdxType> &true_query_group_ids)
    {
       auto num_queries = query_storage->get_num_points();
@@ -2165,40 +2258,41 @@ namespace ANNS
 
          // 获取查询标签集
          const auto &query_labels = _query_storage->get_label_set(id);
-         for (auto i = 0; i < query_labels.size(); ++i)
-         {
-            std::cout << query_labels[i] << " ";
-         }
 
          // 计算入口组信息
          auto get_entry_group_start_time = std::chrono::high_resolution_clock::now();
          std::vector<IdxType> entry_group_ids;
-         if (!is_select_entry_groups)
-         {
-            get_min_super_sets(query_labels, entry_group_ids, true, true);
-            stats.num_entry_points = entry_group_ids.size();
-         }
-         else
-         {
-            IdxType true_group_id = 0;
-            if (id < true_query_group_ids.size())
-            {
-               true_group_id = true_query_group_ids[id]; // 获取当前查询的真实组ID
-            }
+         static std::atomic<int> trie_debug_print_counter{0};
+         auto get_min_super_sets_satrt_time = std::chrono::high_resolution_clock::now();
+         get_min_super_sets_debug(query_labels, entry_group_ids, true, true, trie_debug_print_counter, is_new_trie_method);
+         stats.get_min_super_sets_time_ms = std::chrono::duration<double, std::milli>(
+                                                std::chrono::high_resolution_clock::now() - get_min_super_sets_satrt_time)
+                                                .count();
+         stats.num_entry_points = entry_group_ids.size();
 
-            std::vector<IdxType> base_entry_groups;
-            get_min_super_sets(query_labels, base_entry_groups, true, true);
-            const size_t extra_k = base_entry_groups.size() / 5;
-            const SelectionMode current_mode = SelectionMode::SizeAndDistance;
-            const double beta_value = 1.0;
-            entry_group_ids = select_entry_groups(
-                base_entry_groups,
-                current_mode,
-                extra_k,
-                beta_value,
-                true_group_id);
-            stats.num_entry_points = entry_group_ids.size();
-         }
+         // IdxType true_group_id = 0;
+         // if (id < true_query_group_ids.size())
+         // {
+         //    true_group_id = true_query_group_ids[id]; // 获取当前查询的真实组ID
+         // }
+         // std::vector<IdxType> base_entry_groups;
+         // static std::atomic<int> trie_debug_print_counter{0};
+         // auto get_min_super_sets_satrt_time = std::chrono::high_resolution_clock::now();
+         // get_min_super_sets_debug(query_labels, base_entry_groups, true, true, trie_debug_print_counter);
+         // stats.get_min_super_sets_time_ms = std::chrono::duration<double, std::milli>(
+         //                                        std::chrono::high_resolution_clock::now() - get_min_super_sets_satrt_time)
+         //                                        .count();
+         // const size_t extra_k = base_entry_groups.size() / 5;
+         // const SelectionMode current_mode = SelectionMode::SizeAndDistance;
+         // const double beta_value = 1.0;
+         // entry_group_ids = select_entry_groups(
+         //     base_entry_groups,
+         //     current_mode,
+         //     extra_k,
+         //     beta_value,
+         //     true_group_id);
+         // stats.num_entry_points = entry_group_ids.size();
+
          stats.get_group_entry_time_ms = std::chrono::duration<double, std::milli>(
                                              std::chrono::high_resolution_clock::now() - get_entry_group_start_time)
                                              .count();
@@ -4704,7 +4798,6 @@ namespace ANNS
       std::cout << "   - 完成，耗时: " << std::chrono::duration<double, std::milli>(end_time - start_time).count() << " ms" << std::endl;
    }
 
-   // ===================================begin：“困难夹心”查询任务生成========================================
    // fxy_add: "困难夹心"策略，生成对UNG和ACORN都具有挑战性的查询任务
    void UniNavGraph::generate_queries_hard_sandwich(
        int N,                            // 要生成的查询总数

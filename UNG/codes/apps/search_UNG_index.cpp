@@ -46,10 +46,10 @@ int main(int argc, char **argv)
    ANNS::IdxType K, num_entry_points;
    std::vector<ANNS::IdxType> Lsearch_list;
    uint32_t num_threads;
-   bool is_new_method = false;          // true: use new method
-   bool is_ori_ung = false;             // true: use original ung
-   bool is_select_entry_groups = false; // false:默认的mini entry groups
-   int num_repeats = 1;                 // 默认重复1次
+   bool is_new_method = false;      // true: use new method
+   bool is_ori_ung = false;         // true: use original ung
+   bool is_new_trie_method = false; // false:默认的mini entry groups
+   int num_repeats = 1;             // 默认重复1次
 
    try
    {
@@ -91,8 +91,8 @@ int main(int argc, char **argv)
                          "is_new_method");
       desc.add_options()("is_ori_ung", po::value<bool>(&is_ori_ung)->required(),
                          "is_ori_ung");
-      desc.add_options()("is_select_entry_groups", po::value<bool>(&is_select_entry_groups)->required(),
-                         "is_select_entry_groups");
+      desc.add_options()("is_new_trie_method", po::value<bool>(&is_new_trie_method)->required(),
+                         "is_new_trie_method");
       desc.add_options()("num_repeats", po::value<int>(&num_repeats)->default_value(1),
                          "Number of repeats for each Lsearch value");
 
@@ -183,7 +183,7 @@ int main(int argc, char **argv)
             index.search(query_storage, distance_handler, num_threads, Lsearch_list[LsearchId], num_entry_points, scenario, K, results, num_cmps, bitmap);
          else
             index.search_hybrid(query_storage, distance_handler, num_threads, Lsearch_list[LsearchId],
-                                num_entry_points, scenario, K, results, num_cmps, query_stats[repeat][LsearchId], bitmap, is_ori_ung, is_select_entry_groups, true_query_group_ids);
+                                num_entry_points, scenario, K, results, num_cmps, query_stats[repeat][LsearchId], bitmap, is_ori_ung, is_new_trie_method, true_query_group_ids);
          auto time_cost = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
          for (int i = 0; i < num_queries; ++i)
             query_stats[repeat][LsearchId][i].recall = calculate_single_query_recall(gt + i * K, results + i * K, K);
@@ -192,7 +192,7 @@ int main(int argc, char **argv)
 
    // 输出详细文件
    std::ofstream detail_out(result_path_prefix + "query_details_repeat" + std::to_string(num_repeats) + ".csv");
-   detail_out << "repeat,Lsearch,QueryID,Time(ms),get_entry_group_start_time(ms),descendants_merge_time(ms),coverage_merge_time(ms),flag_time(ms),bitmap_time(ms),UNG_time(ms),DistanceCalcs,EntryPoints,LNGDescendants,entry_group_total_coverage,QPS,Recall,is_global_search\n";
+   detail_out << "repeat,Lsearch,QueryID,Time(ms),get_minsuper_sets_time(ms),get_entry_group_start_time(ms),descendants_merge_time(ms),coverage_merge_time(ms),flag_time(ms),bitmap_time(ms),UNG_time(ms),DistanceCalcs,EntryPoints,LNGDescendants,entry_group_total_coverage,QPS,Recall,is_global_search\n";
 
    for (int repeat = 0; repeat < num_repeats; repeat++)
    {
@@ -204,12 +204,13 @@ int main(int argc, char **argv)
                        << Lsearch_list[LsearchId] << ","
                        << i << ","
                        << query_stats[repeat][LsearchId][i].time_ms << ","
+                       << query_stats[repeat][LsearchId][i].get_min_super_sets_time_ms << ","
                        << query_stats[repeat][LsearchId][i].get_group_entry_time_ms << ","
                        << query_stats[repeat][LsearchId][i].descendants_merge_time_ms << ","
                        << query_stats[repeat][LsearchId][i].coverage_merge_time_ms << ","
                        << query_stats[repeat][LsearchId][i].flag_time_ms << ","
                        << bitmap_and_time[i].second << ","
-                       << query_stats[repeat][LsearchId][i].time_ms - query_stats[repeat][LsearchId][i].flag_time_ms - query_stats[repeat][LsearchId][i].get_group_entry_time_ms << ","
+                       << query_stats[repeat][LsearchId][i].time_ms - query_stats[repeat][LsearchId][i].flag_time_ms << ","
                        << query_stats[repeat][LsearchId][i].num_distance_calcs << ","
                        << query_stats[repeat][LsearchId][i].num_entry_points << ","
                        << query_stats[repeat][LsearchId][i].num_lng_descendants << ","
