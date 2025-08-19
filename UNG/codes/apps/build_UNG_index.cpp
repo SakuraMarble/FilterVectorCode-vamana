@@ -219,6 +219,17 @@ int main(int argc, char **argv)
              0.1f             // 查询选择率至多
          );
       }
+      else if (generate_query_task == "hard_top_n_rare")
+      {
+         index.generate_queries_hard_top_n_rare(
+             3000,            // 生成查询的个数
+             query_file_path, // 输出目录
+             dataset,         // 数据集名字
+             8,               // top n
+             0.0005f,         // 查询选择率至少
+             0.1f,            // 查询选择率至多
+             15);             // 最小频率
+      }
 
       else
       {

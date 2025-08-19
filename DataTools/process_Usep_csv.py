@@ -8,7 +8,7 @@ import glob
 # 配置区
 BASE_RESULTS_DIR = '/data/fxy/FilterVector/FilterVectorResults'
 TARGET_RECALL = 0.97
-dataset_name = "celeba"  
+dataset_name = "app_reviews"
 OUTPUT_DIR = f"/data/fxy/FilterVector/FilterVectorResults/merge_results/improve2/U_sep/{dataset_name}"
 # ==============================================================================
 
@@ -20,13 +20,15 @@ def find_optimal_performance_per_query(df, recall_col, time_col, dist_calcs_col)
     if df.empty or not all(c in df.columns for c in [recall_col, time_col, dist_calcs_col, 'QueryID']):
         return pd.DataFrame()
 
-    # 确保所需列存在
-    cols_to_check = [recall_col, time_col, dist_calcs_col, 'QueryID', 'repeat', 'Lsearch', 'get_entry_group_start_time(ms)']
+    # 检查和转换所有可能用到的列，且只转换DataFrame中存在的列
+    cols_to_check = [
+        recall_col, time_col, dist_calcs_col, 'QueryID', 'repeat', 'Lsearch',
+        'EntryGroupT_ms', 'QuerySize', 'CandSize', 'SuccessChecks',
+        'HitRatio', 'RecurCalls', 'PruneEvents', 'PruneEff'
+    ]
     for col in cols_to_check:
-        if col not in df.columns:
-            print(f"[WARN] 关键列 '{col}' 在DataFrame中不存在，跳过此文件。")
-            return pd.DataFrame()
-        df[col] = pd.to_numeric(df[col], errors='coerce')
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
 
     df.dropna(subset=[recall_col, time_col, 'QueryID'], inplace=True)
     df['QueryID'] = df['QueryID'].astype(int)
@@ -55,75 +57,91 @@ def find_optimal_performance_per_query(df, recall_col, time_col, dist_calcs_col)
 
 def process_matched_sep_pair(sepfalse_csv_path, septrue_csv_path):
     """
-    处理一对匹配好的 UNG CSV 文件（sep=false 和 sep=true）。
-    现在会额外提取和计算时间相关的列。
+    处理一对匹配好的 CSV 文件
     """
     try:
-        # --- 1. 处理 sep=false 文件 ---
         df_false = pd.read_csv(sepfalse_csv_path)
         df_false.columns = df_false.columns.str.strip()
-        optimal_false = find_optimal_performance_per_query(
-            df_false, 'Recall', 'UNG_time(ms)', 'DistanceCalcs'
-        )
-        
-        # 定义需要提取的列和重命名的映射关系
-        cols_to_select_f = ['QueryID', 'repeat', 'Lsearch', 'Recall', 'UNG_time(ms)', 'DistanceCalcs', 'get_entry_group_start_time(ms)', 'Search_Only_Time']
-        rename_map_f = {
-            'repeat': 'repeat_sepF', 'Lsearch': 'Lsearch_sepF',
-            'Recall': 'Recall_sepF', 'UNG_time(ms)': 'Time_sepF(ms)', 'DistanceCalcs': 'DistCalcs_sepF',
-            'get_entry_group_start_time(ms)': 'Get_Entry_Time_sepF(ms)',
-            'Search_Only_Time': 'Search_Only_Time_sepF(ms)'
-        }
-        
-        if not optimal_false.empty:
-            # 新增计算：纯搜索时间 = UNG总时间 - 获取入口点组的时间
-            optimal_false['Search_Only_Time'] = optimal_false['UNG_time(ms)'] - optimal_false['get_entry_group_start_time(ms)']
-            final_false = optimal_false[cols_to_select_f].rename(columns=rename_map_f)
-        else:
-            final_false = pd.DataFrame(columns=['QueryID'] + list(rename_map_f.values()))
+        optimal_false = find_optimal_performance_per_query(df_false, 'Recall', 'Time_ms', 'DistCalcs')
 
-        # --- 2. 处理 sep=true 文件 ---
         df_true = pd.read_csv(septrue_csv_path)
         df_true.columns = df_true.columns.str.strip()
-        optimal_true = find_optimal_performance_per_query(
-            df_true, 'Recall', 'UNG_time(ms)', 'DistanceCalcs'
-        )
+        optimal_true = find_optimal_performance_per_query(df_true, 'Recall', 'Time_ms', 'DistCalcs')
 
-        cols_to_select_t = ['QueryID', 'repeat', 'Lsearch', 'Recall', 'UNG_time(ms)', 'DistanceCalcs', 'get_entry_group_start_time(ms)', 'Search_Only_Time']
-        rename_map_t = {
-            'repeat': 'repeat_sepT', 'Lsearch': 'Lsearch_sepT',
-            'Recall': 'Recall_sepT', 'UNG_time(ms)': 'Time_sepT(ms)', 'DistanceCalcs': 'DistCalcs_sepT',
-            'get_entry_group_start_time(ms)': 'Get_Entry_Time_sepT(ms)',
-            'Search_Only_Time': 'Search_Only_Time_sepT(ms)'
-        }
-        
-        if not optimal_true.empty:
-            optimal_true['Search_Only_Time'] = optimal_true['UNG_time(ms)'] - optimal_true['get_entry_group_start_time(ms)']
-            final_true = optimal_true[cols_to_select_t].rename(columns=rename_map_t)
-        else:
-            final_true = pd.DataFrame(columns=['QueryID'] + list(rename_map_t.values()))
-
-        # --- 3. 合并结果 ---
-        if final_false.empty and final_true.empty:
+        if optimal_false.empty or optimal_true.empty:
+            print("  [WARN] 其中一个或两个文件处理后为空，无法比较和合并。")
             return None
 
-        if 'QueryID' in final_false.columns:
-            final_false['QueryID'] = final_false['QueryID'].astype(int)
-        if 'QueryID' in final_true.columns:
-            final_true['QueryID'] = final_true['QueryID'].astype(int)
+        # 一致性检查
+        shared_cols = ['QuerySize', 'CandSize']
+        comparison_df = pd.merge(
+            optimal_false[['QueryID'] + shared_cols],
+            optimal_true[['QueryID'] + shared_cols],
+            on='QueryID',
+            suffixes=('_F', '_T')
+        )
 
+        for col in shared_cols:
+            col_f, col_t = f'{col}_F', f'{col}_T'
+            if not comparison_df[col_f].equals(comparison_df[col_t]):
+                mismatch = comparison_df[comparison_df[col_f] != comparison_df[col_t]]
+                if not mismatch.empty:
+                    first_mismatch = mismatch.iloc[0]
+                    error_qid = int(first_mismatch['QueryID'])
+                    val_f, val_t = first_mismatch[col_f], first_mismatch[col_t]
+                    print(f"\n  [ERROR] FATAL: 列 '{col}' 在 QueryID={error_qid} 处的值不一致！")
+                    print(f"    - False 文件中的值: {val_f}")
+                    print(f"    - True 文件中的值: {val_t}")
+                    print("  处理已停止。")
+                    return None
+        
+        print("  [INFO] 一致性检查通过：共享列的值均匹配。")
+
+        # 处理 false 文件 (包含共享列)
+        optimal_false['Search_Only_Time'] = optimal_false['Time_ms'] - optimal_false['EntryGroupT_ms']
+        cols_to_select_f = [
+            'QueryID', 'repeat', 'Lsearch', 'Recall', 'Time_ms', 'DistCalcs',
+            'EntryGroupT_ms', 'Search_Only_Time', 'SuccessChecks', 'HitRatio',
+            'QuerySize', 'CandSize'
+        ]
+        rename_map_f = {
+            'repeat': 'repeat_sepF', 'Lsearch': 'Lsearch_sepF', 'Recall': 'Recall_sepF',
+            'Time_ms': 'Time_sepF(ms)', 'DistCalcs': 'DistCalcs_sepF',
+            'EntryGroupT_ms': 'Get_Entry_Time_sepF(ms)', 'Search_Only_Time': 'Search_Only_Time_sepF(ms)',
+            'SuccessChecks': 'SuccessChecks_sepF', 'HitRatio': 'HitRatio_sepF',
+            'QuerySize': 'QuerySize', 'CandSize': 'CandSize'
+        }
+        final_false = optimal_false[cols_to_select_f].rename(columns=rename_map_f)
+
+        # 处理 true 文件 (不包含共享列)
+        optimal_true['Search_Only_Time'] = optimal_true['Time_ms'] - optimal_true['EntryGroupT_ms']
+        cols_to_select_t = [
+            'QueryID', 'repeat', 'Lsearch', 'Recall', 'Time_ms', 'DistCalcs',
+            'EntryGroupT_ms', 'Search_Only_Time', 'RecurCalls', 'PruneEvents', 'PruneEff'
+        ]
+        rename_map_t = {
+            'repeat': 'repeat_sepT', 'Lsearch': 'Lsearch_sepT', 'Recall': 'Recall_sepT',
+            'Time_ms': 'Time_sepT(ms)', 'DistCalcs': 'DistCalcs_sepT',
+            'EntryGroupT_ms': 'Get_Entry_Time_sepT(ms)', 'Search_Only_Time': 'Search_Only_Time_sepT(ms)',
+            'RecurCalls': 'RecurCalls_sepT', 'PruneEvents': 'PruneEvents_sepT', 'PruneEff': 'PruneEff_sepT'
+        }
+        final_true = optimal_true[cols_to_select_t].rename(columns=rename_map_t)
+
+        # 合并结果
         merged_df = pd.merge(final_false, final_true, on='QueryID', how='outer')
-
         if 'QueryID' in merged_df.columns:
-            cols = ['QueryID'] + [col for col in merged_df.columns if col != 'QueryID']
-            merged_df = merged_df[cols]
+            first_cols = ['QueryID', 'QuerySize', 'CandSize']
+            other_cols = [col for col in merged_df.columns if col not in first_cols]
+            merged_df = merged_df[first_cols + other_cols]
             merged_df.sort_values(by='QueryID', inplace=True)
             merged_df['QueryID'] = merged_df['QueryID'].astype(int)
 
         return merged_df
 
     except Exception as e:
-        print(f"  [ERROR] 处理文件对时出错: {e}")
+        print(f"  [ERROR] 处理文件对时发生意外错误: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
@@ -164,6 +182,7 @@ def main():
 
         print(f"  [SUCCESS] 成功找到匹配对。")
 
+        # 注意：这里的文件名查找使用了通配符，以匹配您更新后的文件名
         sepfalse_csv_path = next(iter(glob.glob(os.path.join(sepfalse_dir_path, 'results', 'query_details_repeat*.csv'))), None)
         septrue_csv_path = next(iter(glob.glob(os.path.join(septrue_dir_path, 'results', 'query_details_repeat*.csv'))), None)
 
@@ -188,7 +207,7 @@ def main():
             print(f"  [SAVE] 结果已保存到: {output_path}")
             success_count += 1
         else:
-            print("  [WARN] 处理结果为空，未生成文件。")
+            print("  [WARN] 处理结果为空或检查失败，未生成文件。")
 
     print(f"\n[FINISH] 数据集 '{dataset_name}' 处理完成！")
     print(f"共成功处理并生成了 {success_count} 个CSV结果文件在目录 '{os.path.abspath(OUTPUT_DIR)}' 中。")

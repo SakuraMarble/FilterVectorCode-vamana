@@ -11,7 +11,14 @@
 namespace ANNS
 {
 
-   // 用于从方法二(递归法)中收集详细性能指标的结构体
+   // fxy_add:用于方法一 (Shortcut) 的指标传递
+   struct TrieMethod1Metrics
+   {
+      size_t initial_candidates = 0;
+      size_t successful_checks = 0;
+   };
+
+   // fxy_add:用于从方法二(递归法)中收集详细性能指标的结构体
    struct TrieSearchMetricsRecursive
    {
       // --- 递归搜索阶段 (DFS) ---
@@ -23,6 +30,16 @@ namespace ANNS
       long long collection_calls = 0;       // collect_all_terminals被调用的次数
       long long nodes_processed_in_bfs = 0; // 在所有收集中，BFS处理的总节点数
       double time_in_collection_bfs = 0.0;  // 在所有收集中，BFS花费的总时间
+   };
+
+   // fxy_add:Add a struct to hold the calculated metrics
+   struct TrieStaticMetrics
+   {
+      size_t label_cardinality = 0;
+      size_t total_nodes = 0;
+      double avg_path_length = 0.0;
+      double avg_branching_factor = 0.0;
+      std::map<ANNS::LabelType, size_t> label_frequency;
    };
 
    // trie tree node
@@ -63,14 +80,32 @@ namespace ANNS
       void get_super_set_entrances_debug(const std::vector<LabelType> &label_set,
                                          std::vector<std::shared_ptr<TrieNode>> &super_set_entrances,
                                          bool avoid_self, bool need_containment,
-                                         std::atomic<int> &print_counter) const;
+                                         std::atomic<int> &print_counter, TrieMethod1Metrics &metrics) const;
       void get_super_set_entrances_new(const std::vector<LabelType> &label_set,
                                        std::vector<std::shared_ptr<TrieNode>> &super_set_entrances,
                                        bool avoid_self, bool need_containment) const;
       void get_super_set_entrances_new_debug(const std::vector<LabelType> &label_set,
                                              std::vector<std::shared_ptr<TrieNode>> &super_set_entrances,
                                              bool avoid_self, bool need_containment,
-                                             std::atomic<int> &print_counter) const;
+                                             std::atomic<int> &print_counter, TrieSearchMetricsRecursive &metrics) const;
+      void get_super_set_entrances_new_more_sp_debug(const std::vector<LabelType> &label_set,
+                                                     std::vector<std::shared_ptr<TrieNode>> &super_set_entrances,
+                                                     bool avoid_self, bool need_containment,
+                                                     std::atomic<int> &print_counter, TrieSearchMetricsRecursive &metrics) const;
+
+      // fxy_add
+      size_t get_candidate_count_for_label(LabelType label) const
+      {
+         // 步骤1: 检查标签ID是否在 _label_to_nodes 向量的有效范围内
+         if (label >= _label_to_nodes.size())
+         {
+            return 0; // 标签越界，不可能有对应的候选集
+         }
+         // 步骤2: 直接通过索引访问并返回内部向量的大小
+         return _label_to_nodes[label].size();
+      }
+      // fxy_add:计算并返回Trie树的静态结构指标
+      TrieStaticMetrics calculate_static_metrics() const;
 
       // I/O
       void save(std::string filename) const;

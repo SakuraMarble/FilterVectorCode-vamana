@@ -9,6 +9,7 @@
 #include <thread>
 #include <chrono>
 #include <omp.h>
+#include <unordered_set>
 #include "trie.h"
 
 namespace ANNS
@@ -135,9 +136,10 @@ namespace ANNS
    void TrieIndex::get_super_set_entrances_debug(const std::vector<LabelType> &label_set,
                                                  std::vector<std::shared_ptr<TrieNode>> &super_set_entrances,
                                                  bool avoid_self, bool need_containment,
-                                                 std::atomic<int> &print_counter) const // 1. 添加 print_counter 参数
+                                                 std::atomic<int> &print_counter, TrieMethod1Metrics &metrics) const // 1. 添加 print_counter 参数
    {
       super_set_entrances.clear();
+      metrics = {};
 
       // --- Metrics & Timers Initialization ---
       auto function_start_time = std::chrono::high_resolution_clock::now();
@@ -203,6 +205,10 @@ namespace ANNS
       }
       auto end_candidate_gen = std::chrono::high_resolution_clock::now();
       time_candidate_gen = std::chrono::duration<double, std::milli>(end_candidate_gen - start_candidate_gen).count();
+
+      // 填充 metrics 结构体 ===
+      metrics.initial_candidates = initial_candidates_from_map;
+      metrics.successful_checks = successful_containment_checks;
 
       // --- Phase 2: Downward BFS Search ---
       auto start_bfs = std::chrono::high_resolution_clock::now();
@@ -280,15 +286,16 @@ namespace ANNS
    void TrieIndex::get_super_set_entrances_new_debug(const std::vector<LabelType> &label_set,
                                                      std::vector<std::shared_ptr<TrieNode>> &super_set_entrances,
                                                      bool avoid_self, bool need_containment,
-                                                     std::atomic<int> &print_counter) const
+                                                     std::atomic<int> &print_counter, TrieSearchMetricsRecursive &metrics) const
    {
       super_set_entrances.clear();
+      metrics = {}; // 清空传入的 metrics
+
       if (!need_containment)
          return;
 
       // --- 初始化 ---
       auto function_start_time = std::chrono::high_resolution_clock::now();
-      TrieSearchMetricsRecursive metrics; // 创建指标对象
 
       std::shared_ptr<TrieNode> avoided_node = nullptr;
       if (avoid_self)
@@ -325,6 +332,95 @@ namespace ANNS
                       << "  - Total super sets found: " << super_set_entrances.size() << "\n"
                       << "  - Total function time: " << total_time << " ms\n"
                       << "---------------------------------------------------\n"
+                      << std::endl;
+         }
+      }
+   }
+
+   // fxy_add:方法二新的主入口函数调试输出版本,不从root进入
+   void TrieIndex::get_super_set_entrances_new_more_sp_debug(const std::vector<LabelType> &label_set,
+                                                             std::vector<std::shared_ptr<TrieNode>> &super_set_entrances,
+                                                             bool avoid_self, bool need_containment,
+                                                             std::atomic<int> &print_counter, TrieSearchMetricsRecursive &metrics) const
+   {
+      // --- 0. 预处理与边界检查 (逻辑不变) ---
+      super_set_entrances.clear();
+      metrics = {}; // 重置性能指标
+
+      if (!need_containment || label_set.empty())
+      {
+         return;
+      }
+      if (label_set[0] >= _label_to_nodes.size())
+      {
+         return;
+      }
+
+      // --- 1. 初始化 (逻辑不变) ---
+      auto function_start_time = std::chrono::high_resolution_clock::now();
+
+      std::shared_ptr<TrieNode> avoided_node = nullptr;
+      if (avoid_self)
+      {
+         avoided_node = find_exact_match(label_set);
+      }
+
+      std::set<IdxType> visited_groups;
+
+      const auto &entry_points = _label_to_nodes.at(label_set[0]);
+      if (entry_points.empty())
+      {
+         return;
+      }
+
+      // --- 2. 串行搜索 ---
+      for (const auto &start_node : entry_points)
+      {
+         if (label_set.size() == 1)
+         {
+            // [MODIFIED] 直接将结果写入主输出变量 super_set_entrances 和 metrics
+            collect_all_terminals_debug(start_node, super_set_entrances, visited_groups, avoided_node, metrics);
+         }
+         else
+         {
+            // [MODIFIED] 直接将结果写入主输出变量 super_set_entrances 和 metrics
+            find_supersets_recursive_debug(
+                start_node,
+                label_set,
+                1,
+                super_set_entrances, // 直接使用主结果容器
+                visited_groups,
+                avoided_node,
+                metrics, // 直接使用主指标结构体
+                1);
+         }
+      }
+      // [REMOVED] 用于合并结果的临界区 #pragma omp critical(Mergemore_spResults) 被移除
+
+      // --- 3. 最终报告 (逻辑不变) ---
+      auto function_end_time = std::chrono::high_resolution_clock::now();
+      double total_time = std::chrono::duration<double, std::milli>(function_end_time - function_start_time).count();
+
+      if (print_counter.fetch_add(1, std::memory_order_relaxed) < 10)
+      {
+// 这里的临界区可以保留，以防止此函数本身在外部被多线程调用时打印混乱
+#pragma omp critical(PrintSuperSetReport)
+         {
+            std::cout << "\n--- Method 'find_supersets_serial_debug' Performance Analysis ---\n" // 函数名更新
+                      << "Query: size=" << label_set.size() << ", first_label=" << label_set[0] << "\n"
+                      << "Serial Entry Points: " << entry_points.size() << "\n" // 提示这是串行处理
+                      << "--- Phase 1: Recursive Search (DFS) ---\n"
+                      << "   - Recursive calls: " << metrics.recursive_calls << "\n"
+                      << "   - Pruning events (IMPORTANT): " << metrics.pruning_events << "\n"
+                      << "   - Max recursion depth: " << metrics.max_recursion_depth << "\n"
+                      << "--- Phase 2: Result Collection (BFS) ---\n"
+                      << "   - Collection function calls: " << metrics.collection_calls << "\n"
+                      << "   - Nodes processed in all BFS: " << metrics.nodes_processed_in_bfs << "\n"
+                      << "   - Time spent in all BFS: " << metrics.time_in_collection_bfs << " ms\n"
+                      << "--- Summary ---\n"
+                      << "   - Total super sets found: " << super_set_entrances.size() << "\n"
+                      << "   - Total function time: " << total_time << " ms\n"
+                      << "-----------------------------------------------------------\n"
                       << std::endl;
          }
       }
@@ -625,4 +721,78 @@ namespace ANNS
       }
       return index_size;
    }
+
+   // fxy_add
+   TrieStaticMetrics TrieIndex::calculate_static_metrics() const
+   {
+      TrieStaticMetrics metrics;
+      if (_root == nullptr)
+      {
+         return metrics; // Return empty metrics if Trie is not built
+      }
+
+      // --- Use a queue for level-order traversal to visit all nodes ---
+      std::queue<std::shared_ptr<TrieNode>> q;
+      q.push(_root);
+      std::unordered_set<std::shared_ptr<TrieNode>> visited;
+      visited.insert(_root);
+
+      // --- Variables for calculation ---
+      double total_path_length_sum = 0;
+      size_t path_count = 0; // Equivalent to num_groups
+      double total_branching_factor_sum = 0;
+      size_t non_leaf_node_count = 0;
+
+      while (!q.empty())
+      {
+         std::shared_ptr<TrieNode> current = q.front();
+         q.pop();
+
+         metrics.total_nodes++;
+
+         // --- Metric: Average Path Length ---
+         if (current->group_id > 0)
+         {
+            total_path_length_sum += current->label_set_size;
+            path_count++;
+         }
+
+         // --- Metric: Average Branching Factor ---
+         if (!current->children.empty())
+         {
+            total_branching_factor_sum += current->children.size();
+            non_leaf_node_count++;
+         }
+
+         // --- Enqueue children for traversal ---
+         for (const auto &child_pair : current->children)
+         {
+            if (visited.find(child_pair.second) == visited.end())
+            {
+               q.push(child_pair.second);
+               visited.insert(child_pair.second);
+            }
+         }
+      }
+
+      // --- Final Calculations ---
+      metrics.label_cardinality = _label_to_nodes.size();
+      if (path_count > 0)
+      {
+         metrics.avg_path_length = total_path_length_sum / path_count;
+      }
+      if (non_leaf_node_count > 0)
+      {
+         metrics.avg_branching_factor = total_branching_factor_sum / non_leaf_node_count;
+      }
+
+      // --- Metric: Label Frequency Distribution ---
+      for (ANNS::LabelType label = 0; label < _label_to_nodes.size(); ++label)
+      {
+         metrics.label_frequency[label] = _label_to_nodes[label].size();
+      }
+
+      return metrics;
+   }
+
 }

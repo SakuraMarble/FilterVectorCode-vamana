@@ -31,6 +31,17 @@ namespace ANNS
       size_t num_entry_points;
       size_t num_lng_descendants;
       bool is_global_search;
+
+      size_t query_length; // 查询长度
+
+      // 方法一相关
+      size_t candidate_set_size;
+      size_t successful_checks = 0;
+      float shortcut_hit_ratio = 0.0f;
+      // 方法二相关
+      size_t recursive_calls = 0;
+      size_t pruning_events = 0;
+      float pruning_efficiency = 0.0f;
    };
    struct NewEdgeCandidate
    {
@@ -158,6 +169,14 @@ namespace ANNS
           float query_max_selectivity);     // 查询的最大选择率 (例如 0.01, 即1%)
       std::vector<int> _lng_node_depths;    // 存储每个group_id的图深度,generate_queries_hard_sandwich需要用
       void _precompute_lng_node_depths();
+      void generate_queries_hard_top_n_rare(
+          int N,                            // 要生成的查询总数
+          const std::string &output_prefix, // 输出文件路径前缀
+          const std::string &dataset,       // 数据集名称
+          int num_rare_labels_to_use,       // 要使用的频率最低的标签数量 (n)
+          float query_min_selectivity,      // 查询的最小选择率
+          float query_max_selectivity,      // 查询的最大选择率
+          int min_frequency_for_rare_labels = 1);
 
       void load_bipartite_graph(const std::string &filename);
       bool compare_graphs(const ANNS::UniNavGraph &g1, const ANNS::UniNavGraph &g2);
@@ -209,7 +228,7 @@ namespace ANNS
       void get_min_super_sets_debug(const std::vector<LabelType> &query_label_set,
                                     std::vector<IdxType> &min_super_set_ids,
                                     bool avoid_self, bool need_containment,
-                                    std::atomic<int> &print_counter, bool is_new_trie_method);
+                                    std::atomic<int> &print_counter, bool is_new_trie_method, QueryStats &stats);
       void cal_f_coverage_ratio();
       void build_label_nav_graph();
       size_t count_all_descendants(IdxType group_id) const;

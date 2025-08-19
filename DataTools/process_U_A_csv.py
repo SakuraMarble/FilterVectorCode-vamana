@@ -160,7 +160,6 @@ def main():
         acorn_dir = matched_acorn_dirs[0]
         print(f"  [SUCCESS] 成功匹配ACORN目录: {os.path.basename(acorn_dir)}")
 
-        # --- 这里是唯一的、关键的修改 ---
         # 步骤1: 查找所有可能的CSV文件
         all_acorn_csvs = glob.glob(os.path.join(acorn_dir, 'results', '*.csv'))
         

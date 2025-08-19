@@ -192,14 +192,17 @@ int main(int argc, char **argv)
 
    // 输出详细文件
    std::ofstream detail_out(result_path_prefix + "query_details_repeat" + std::to_string(num_repeats) + ".csv");
-   detail_out << "repeat,Lsearch,QueryID,Time(ms),get_minsuper_sets_time(ms),get_entry_group_start_time(ms),descendants_merge_time(ms),coverage_merge_time(ms),flag_time(ms),bitmap_time(ms),UNG_time(ms),DistanceCalcs,EntryPoints,LNGDescendants,entry_group_total_coverage,QPS,Recall,is_global_search\n";
-
+   detail_out << "repeat,Lsearch,QueryID,Time_ms,MinSupersetT_ms,EntryGroupT_ms,DescMergeT_ms,CovMergeT_ms,"
+              << "FlagT_ms,BitmapT_ms,SearchT_ms,DistCalcs,NumEntries,NumDescendants,TotalCoverage,QuerySize,"
+              << "CandSize,SuccessChecks,HitRatio,RecurCalls,PruneEvents,PruneEff,"
+              << "QPS,Recall,IsGlobal\n";
    for (int repeat = 0; repeat < num_repeats; repeat++)
    {
       for (int LsearchId = 0; LsearchId < Lsearch_list.size(); LsearchId++)
       {
          for (int i = 0; i < num_queries; ++i)
          {
+            // 更新循环体中的输出以匹配新的表头
             detail_out << repeat << ","
                        << Lsearch_list[LsearchId] << ","
                        << i << ","
@@ -215,12 +218,20 @@ int main(int argc, char **argv)
                        << query_stats[repeat][LsearchId][i].num_entry_points << ","
                        << query_stats[repeat][LsearchId][i].num_lng_descendants << ","
                        << query_stats[repeat][LsearchId][i].entry_group_total_coverage << ","
+                       << query_stats[repeat][LsearchId][i].query_length << ","
+                       << query_stats[repeat][LsearchId][i].candidate_set_size << ","
+                       << query_stats[repeat][LsearchId][i].successful_checks << ","
+                       << query_stats[repeat][LsearchId][i].shortcut_hit_ratio << ","
+                       << query_stats[repeat][LsearchId][i].recursive_calls << ","
+                       << query_stats[repeat][LsearchId][i].pruning_events << ","
+                       << query_stats[repeat][LsearchId][i].pruning_efficiency << ","
                        << 1000.0 / (query_stats[repeat][LsearchId][i].time_ms) << ","
                        << query_stats[repeat][LsearchId][i].recall << ","
                        << query_stats[repeat][LsearchId][i].is_global_search << "\n";
          }
       }
    }
+
    detail_out.close();
    // std::cout << "- Lsearch=" << Lsearch_list[LsearchId] << ", time=" << time_cost << "ms" << std::endl;
    // all_qpss.push_back(num_queries * 1000.0 / time_cost);

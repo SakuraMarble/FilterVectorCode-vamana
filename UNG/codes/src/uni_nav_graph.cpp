@@ -215,7 +215,7 @@ namespace ANNS
    void UniNavGraph::get_min_super_sets_debug(const std::vector<LabelType> &query_label_set,
                                               std::vector<IdxType> &min_super_set_ids,
                                               bool avoid_self, bool need_containment,
-                                              std::atomic<int> &print_counter, bool is_new_trie_method)
+                                              std::atomic<int> &print_counter, bool is_new_trie_method, QueryStats &stats)
    {
       // --- 计时器变量定义 ---
       double time_trie_lookup = 0.0;
@@ -229,10 +229,53 @@ namespace ANNS
       // --- 1. 测量Trie查找候选者的时间 ---
       auto start_trie = std::chrono::high_resolution_clock::now();
       std::vector<std::shared_ptr<TrieNode>> candidates;
+
       if (is_new_trie_method)
-         _trie_index.get_super_set_entrances_new_debug(query_label_set, candidates, avoid_self, need_containment, print_counter);
+      {
+         // --- 调用方法二 (Recursive) ---
+         // 1. 创建一个用于接收底层指标的结构体实例
+         TrieSearchMetricsRecursive trie_metrics_m2 = {};
+
+         // 2. 调用修改后的 TrieIndex 方法，将结构体传入
+         _trie_index.get_super_set_entrances_new_more_sp_debug(query_label_set, candidates, avoid_self, need_containment, print_counter, trie_metrics_m2);
+
+         // 3. 将从底层获取的指标填充到高层的 QueryStats 中
+         stats.recursive_calls = trie_metrics_m2.recursive_calls;
+         stats.pruning_events = trie_metrics_m2.pruning_events;
+
+         // 4. 计算并填充衍生指标：剪枝效率
+         if (stats.recursive_calls > 0)
+         {
+            stats.pruning_efficiency = static_cast<float>(stats.pruning_events) / stats.recursive_calls;
+         }
+         else
+         {
+            stats.pruning_efficiency = 0.0f;
+         }
+      }
       else
-         _trie_index.get_super_set_entrances_debug(query_label_set, candidates, avoid_self, need_containment, print_counter);
+      {
+         // --- 调用方法一 (Shortcut) ---
+         // 1. 创建一个用于接收底层指标的结构体实例
+         TrieMethod1Metrics trie_metrics_m1 = {};
+
+         // 2. 调用修改后的 TrieIndex 方法，将结构体传入
+         _trie_index.get_super_set_entrances_debug(query_label_set, candidates, avoid_self, need_containment, print_counter, trie_metrics_m1);
+
+         // 3. 将从底层获取的指标填充到高层的 QueryStats 中
+         stats.successful_checks = trie_metrics_m1.successful_checks;
+
+         // 4. 计算并填充衍生指标：捷径命中率
+         if (stats.candidate_set_size > 0)
+         {
+            stats.shortcut_hit_ratio = static_cast<float>(stats.successful_checks) / stats.candidate_set_size;
+         }
+         else
+         {
+            stats.shortcut_hit_ratio = 0.0f;
+         }
+      }
+
       auto end_trie = std::chrono::high_resolution_clock::now();
       time_trie_lookup = std::chrono::duration<double, std::milli>(end_trie - start_trie).count();
 
@@ -2259,12 +2302,20 @@ namespace ANNS
          // 获取查询标签集
          const auto &query_labels = _query_storage->get_label_set(id);
 
+         // 新增指标记录
+         stats.query_length = query_labels.size(); // 记录查询长度
+         if (!query_labels.empty())                // 记录候选集大小
+            stats.candidate_set_size = _trie_index.get_candidate_count_for_label(query_labels.back());
+         else
+            stats.candidate_set_size = 0;
+
          // 计算入口组信息
          auto get_entry_group_start_time = std::chrono::high_resolution_clock::now();
          std::vector<IdxType> entry_group_ids;
          static std::atomic<int> trie_debug_print_counter{0};
          auto get_min_super_sets_satrt_time = std::chrono::high_resolution_clock::now();
-         get_min_super_sets_debug(query_labels, entry_group_ids, true, true, trie_debug_print_counter, is_new_trie_method);
+         get_min_super_sets_debug(query_labels, entry_group_ids, true, true,
+                                  trie_debug_print_counter, is_new_trie_method, stats);
          stats.get_min_super_sets_time_ms = std::chrono::duration<double, std::milli>(
                                                 std::chrono::high_resolution_clock::now() - get_min_super_sets_satrt_time)
                                                 .count();
@@ -2679,6 +2730,23 @@ namespace ANNS
       meta_data["cross_edge_step2_acorn_time(ms)"] = std::to_string(_cross_edge_step2_acorn_time_ms);
       meta_data["cross_edge_step3_add_dist_edges_time(ms)"] = std::to_string(_cross_edge_step3_add_dist_edges_time_ms);
       meta_data["cross_edge_step4_add_hierarchy_edges_time(ms)"] = std::to_string(_cross_edge_step4_add_hierarchy_edges_time_ms);
+
+      // FXY_ADD: 计算并保存 Trie 静态指标
+      std::cout << "Calculating and saving Trie static metrics..." << std::endl;
+      TrieStaticMetrics trie_metrics = _trie_index.calculate_static_metrics();
+      meta_data["trie_label_cardinality"] = std::to_string(trie_metrics.label_cardinality);
+      meta_data["trie_total_nodes"] = std::to_string(trie_metrics.total_nodes);
+      meta_data["trie_avg_path_length"] = std::to_string(trie_metrics.avg_path_length);
+      meta_data["trie_avg_branching_factor"] = std::to_string(trie_metrics.avg_branching_factor);
+      // Save the detailed label frequency distribution to its own file for easier analysis
+      std::string trie_freq_filename = results_path_prefix + "trie_label_frequency.csv";
+      std::ofstream freq_file(trie_freq_filename);
+      freq_file << "LabelID,Frequency\n";
+      for (const auto &pair : trie_metrics.label_frequency)
+         freq_file << pair.first << "," << pair.second << "\n";
+      freq_file.close();
+      std::cout << "- Trie label frequency distribution saved to " << trie_freq_filename << std::endl;
+
       std::string meta_filename = index_path_prefix + "meta";
       write_kv_file(meta_filename, meta_data);
 
@@ -4743,7 +4811,7 @@ namespace ANNS
 
    // ===================================end：生成query task========================================
 
-   // ===================================begin：“困难夹心”查询任务生成========================================
+   // ===================================begin：限制覆盖率的查询任务生成========================================
    // fxy_add: LNG节点深度预计算
    void UniNavGraph::_precompute_lng_node_depths()
    {
@@ -5117,5 +5185,562 @@ namespace ANNS
       std::cout << "========================================================" << std::endl;
    }
 
-   // ===================================end：“困难夹心”查询任务生成=========================================
+   // fxy_add:生成“困难Top-N稀有标签”查询任务
+   void UniNavGraph::generate_queries_hard_top_n_rare(
+       int N,                            // 要生成的查询总数
+       const std::string &output_prefix, // 输出文件路径前缀
+       const std::string &dataset,       // 数据集名称
+       int num_rare_labels_to_use,       // 要使用的频率最低的标签数量 (n)
+       float query_min_selectivity,      // 查询的最小选择率
+       float query_max_selectivity,      // 查询的最大选择率
+       int min_frequency_for_rare_labels)
+   {
+      std::cout << "\n========================================================" << std::endl;
+      std::cout << "--- 开始生成“困难Top-N稀有标签”查询 (Hard Top-N Rare Label Queries) ---" << std::endl;
+      std::cout << "--- 策略: 轮流使用频率最低的 " << num_rare_labels_to_use << " 个标签生成查询 ---" << std::endl;
+      std::cout << "========================================================" << std::endl;
+
+      int min_vectors_for_fallback = 10; // 用于控制备用模式下的最小向量数
+
+      // --- 阶段 0: 基本检查与准备 ---
+      if (_label_nav_graph == nullptr || _label_nav_graph->out_neighbors.empty() || _lng_node_depths.empty())
+      {
+         std::cerr << "[错误] LNG或其深度信息未构建，请确保build()或load()后调用了_precompute_lng_node_depths()。" << std::endl;
+         return;
+      }
+      if (_num_points == 0)
+      {
+         std::cerr << "[错误] 数据点数量为0。" << std::endl;
+         return;
+      }
+      auto all_start_time = std::chrono::high_resolution_clock::now();
+
+      // --- 阶段 1: 构建倒排索引以快速计算频率和覆盖率 ---
+      std::cout << "[步骤 1/5] 正在构建倒排索引..." << std::endl;
+      auto start_time = std::chrono::high_resolution_clock::now();
+      std::unordered_map<LabelType, std::vector<IdxType>> label_to_vectors_map;
+      for (IdxType i = 0; i < _num_points; ++i)
+      {
+         const auto &labels = _base_storage->get_label_set(i);
+         for (const auto &label : labels)
+         {
+            label_to_vectors_map[label].push_back(i);
+         }
+      }
+      auto end_time = std::chrono::high_resolution_clock::now();
+      std::cout << " - 完成，耗时: " << std::chrono::duration<double, std::milli>(end_time - start_time).count() << " ms" << std::endl;
+
+      // --- 阶段 2: 识别Top-N稀有标签 (带频率下限过滤) ---
+      std::cout << "[步骤 2/5] 正在识别频率最低的 " << num_rare_labels_to_use
+                << " 个标签 (要求频率不低于 " << min_frequency_for_rare_labels << ")..." << std::endl;
+      start_time = std::chrono::high_resolution_clock::now();
+
+      std::vector<std::pair<LabelType, size_t>> label_frequencies;
+      for (const auto &pair : label_to_vectors_map)
+      {
+         label_frequencies.push_back({pair.first, pair.second.size()});
+      }
+
+      // 按频率升序排序
+      std::sort(label_frequencies.begin(), label_frequencies.end(),
+                [](const auto &a, const auto &b)
+                {
+                   return a.second < b.second;
+                });
+
+      // 新增逻辑 - 过滤掉频率低于下限的标签
+      std::vector<std::pair<LabelType, size_t>> candidate_labels;
+      for (const auto &freq_pair : label_frequencies)
+      {
+         if (freq_pair.second >= (size_t)min_frequency_for_rare_labels)
+         {
+            candidate_labels.push_back(freq_pair);
+         }
+      }
+
+      if (candidate_labels.empty())
+      {
+         std::cerr << "[警告] 没有标签的频率满足不低于 " << min_frequency_for_rare_labels << " 的条件，无法生成查询。" << std::endl;
+         return;
+      }
+
+      std::cout << " - 共有 " << candidate_labels.size() << " 个标签满足频率下限条件。" << std::endl;
+
+      std::vector<LabelType> top_n_rare_labels;
+      std::vector<std::pair<LabelType, size_t>> top_n_rare_labels_with_freq;
+      // 从过滤后的候选列表中选择
+      int actual_num_to_use = std::min((int)candidate_labels.size(), num_rare_labels_to_use);
+
+      for (int i = 0; i < actual_num_to_use; ++i)
+      {
+         top_n_rare_labels.push_back(candidate_labels[i].first);
+         top_n_rare_labels_with_freq.push_back(candidate_labels[i]);
+      }
+
+      end_time = std::chrono::high_resolution_clock::now();
+      std::cout << " - 完成，最终选定 " << top_n_rare_labels.size() << " 个稀有标签。耗时: " << std::chrono::duration<double, std::milli>(end_time - start_time).count() << " ms" << std::endl;
+
+      if (top_n_rare_labels.empty())
+      {
+         std::cerr << "[警告] 未找到任何标签，无法生成查询。" << std::endl;
+         return;
+      }
+
+      // --- 阶段 3: 为每个Top-N稀有标签构建查询模板库 ---
+      std::cout << "[步骤 3/5] 正在为每个稀有标签构建查询模板库..." << std::endl;
+      start_time = std::chrono::high_resolution_clock::now();
+
+      struct QueryTemplate
+      {
+         std::vector<LabelType> labels;
+         std::vector<IdxType> matching_vectors;
+      };
+
+      std::unordered_map<LabelType, std::vector<QueryTemplate>> rare_label_to_templates_map;
+
+      // 遍历所有唯一的标签组合 (groups) 来寻找模板
+      for (const auto &query_labels_vec : _group_id_to_label_set)
+      {
+
+         if (query_labels_vec.empty())
+            continue;
+
+         // 检查这个组合是否包含我们关注的Top-N稀有标签之一
+         for (const auto &rare_label : top_n_rare_labels)
+         {
+            bool contains_current_rare_label = false;
+            for (const auto &label : query_labels_vec)
+            {
+               if (label == rare_label)
+               {
+                  contains_current_rare_label = true;
+                  break;
+               }
+            }
+
+            if (contains_current_rare_label)
+            {
+               // 如果包含，则计算其精确覆盖率并判断是否为有效模板
+               std::vector<LabelType> query_labels = query_labels_vec;
+               std::sort(query_labels.begin(), query_labels.end());
+
+               // --- 开始计算向量交集 ---
+               LabelType rarest_label_in_query = query_labels[0];
+               size_t min_size = label_to_vectors_map.count(rarest_label_in_query) ? label_to_vectors_map[rarest_label_in_query].size() : 0;
+               for (size_t i = 1; i < query_labels.size(); ++i)
+               {
+                  size_t current_size = label_to_vectors_map.count(query_labels[i]) ? label_to_vectors_map[query_labels[i]].size() : 0;
+                  if (current_size < min_size)
+                  {
+                     min_size = current_size;
+                     rarest_label_in_query = query_labels[i];
+                  }
+               }
+
+               if (!label_to_vectors_map.count(rarest_label_in_query))
+                  continue;
+
+               std::vector<IdxType> result_vectors = label_to_vectors_map.at(rarest_label_in_query);
+               for (const auto &label : query_labels)
+               {
+                  if (label == rarest_label_in_query)
+                     continue;
+                  if (!label_to_vectors_map.count(label))
+                  {
+                     result_vectors.clear();
+                     break;
+                  }
+                  std::vector<IdxType> temp_intersection;
+                  const auto &other_list = label_to_vectors_map.at(label);
+                  std::set_intersection(result_vectors.begin(), result_vectors.end(), other_list.begin(), other_list.end(), std::back_inserter(temp_intersection));
+                  result_vectors = std::move(temp_intersection);
+                  if (result_vectors.empty())
+                     break;
+               }
+               // --- 交集计算结束 ---
+
+               float selectivity = (float)result_vectors.size() / _num_points;
+               if (selectivity >= query_min_selectivity && selectivity <= query_max_selectivity)
+               {
+                  rare_label_to_templates_map[rare_label].push_back({query_labels, result_vectors});
+               }
+            }
+         }
+      }
+
+      size_t total_templates = 0;
+      for (const auto &pair : rare_label_to_templates_map)
+         total_templates += pair.second.size();
+
+      end_time = std::chrono::high_resolution_clock::now();
+      std::cout << " - 完成，共找到 " << total_templates << " 个有效查询模板，分布在 "
+                << rare_label_to_templates_map.size() << " 个稀有标签上。耗时: "
+                << std::chrono::duration<double, std::milli>(end_time - start_time).count() << " ms" << std::endl;
+
+      if (total_templates == 0)
+      {
+         std::cout << "[警告] 未找到任何满足条件的查询模板，启动带方向的随机生成模式..." << std::endl;
+         std::cout << " - [策略] 所有随机生成的模板必须至少包含 " << min_vectors_for_fallback << " 个向量。" << std::endl;
+
+         // 计算标签选择率
+         std::unordered_map<LabelType, float> label_selectivity;
+         for (auto &p : label_to_vectors_map)
+         {
+            label_selectivity[p.first] = (float)p.second.size() / _num_points;
+         }
+
+         // 按选择率分池
+         std::vector<LabelType> low_freq, mid_freq, high_freq;
+         for (auto &kv : label_selectivity)
+         {
+            if (kv.second < 0.001f)
+               low_freq.push_back(kv.first);
+            else if (kv.second < 0.2f)
+               mid_freq.push_back(kv.first);
+            else
+               high_freq.push_back(kv.first);
+         }
+
+         std::mt19937 rng(std::random_device{}());
+         auto pick_random = [&](const std::vector<LabelType> &pool) -> LabelType
+         {
+            std::uniform_int_distribution<size_t> dist(0, pool.size() - 1);
+            return pool[dist(rng)];
+         };
+
+         for (auto &rare_label : top_n_rare_labels)
+         {
+            float rare_sel = label_selectivity[rare_label];
+            const std::vector<LabelType> *primary_pool;
+
+            if (rare_sel > query_max_selectivity)
+               primary_pool = &low_freq;
+            else if (rare_sel < query_min_selectivity)
+               primary_pool = &high_freq;
+            else
+               primary_pool = &mid_freq;
+
+            bool generated = false;
+            float best_diff = 1.0f;
+            QueryTemplate best_template;
+
+            // 先试 1 标签
+            {
+               std::vector<LabelType> combo = {rare_label};
+               auto &vecs = label_to_vectors_map[rare_label];
+               float sel = (float)vecs.size() / _num_points;
+               // fxy_add: 增加向量数检查
+               if (sel >= query_min_selectivity && sel <= query_max_selectivity && vecs.size() >= (size_t)min_vectors_for_fallback)
+               {
+                  rare_label_to_templates_map[rare_label].push_back({combo, vecs});
+                  generated = true;
+                  std::cout << "  [生成] 稀有标签 " << rare_label
+                            << " 单标签选择率 " << sel * 100 << "% (" << vecs.size() << " vectors)" << std::endl;
+                  continue;
+               }
+            }
+
+            // 再试 2-5 标签组合
+            for (int combo_size = 2; combo_size <= 5 && !generated; ++combo_size)
+            {
+               for (int attempt = 0; attempt < 500; ++attempt)
+               {
+                  std::vector<LabelType> combo = {rare_label};
+                  std::vector<LabelType> pool = *primary_pool;
+                  std::shuffle(pool.begin(), pool.end(), rng);
+                  for (int i = 0; i < combo_size - 1 && i < (int)pool.size(); ++i)
+                     if (pool[i] != rare_label)
+                        combo.push_back(pool[i]);
+
+                  std::sort(combo.begin(), combo.end());
+                  combo.erase(std::unique(combo.begin(), combo.end()), combo.end());
+
+                  // 求交集 (此部分代码未变)
+                  // ...
+                  LabelType rarest_label_in_combo = combo[0];
+                  size_t min_size = label_to_vectors_map[rarest_label_in_combo].size();
+                  for (size_t i = 1; i < combo.size(); ++i)
+                  {
+                     size_t cur_size = label_to_vectors_map[combo[i]].size();
+                     if (cur_size < min_size)
+                     {
+                        min_size = cur_size;
+                        rarest_label_in_combo = combo[i];
+                     }
+                  }
+                  std::vector<IdxType> result = label_to_vectors_map[rarest_label_in_combo];
+                  for (auto &label : combo)
+                  {
+                     if (label == rarest_label_in_combo)
+                        continue;
+                     std::vector<IdxType> temp;
+                     std::set_intersection(result.begin(), result.end(),
+                                           label_to_vectors_map[label].begin(), label_to_vectors_map[label].end(),
+                                           std::back_inserter(temp));
+                     result.swap(temp);
+                     if (result.empty())
+                        break;
+                  }
+
+                  // fxy_add: 增加对结果向量数的检查
+                  if (result.size() < (size_t)min_vectors_for_fallback)
+                  {
+                     continue; // 如果结果向量太少，直接跳过这次尝试
+                  }
+
+                  float sel = (float)result.size() / _num_points;
+                  float diff = std::min(std::abs(sel - query_min_selectivity), std::abs(sel - query_max_selectivity));
+
+                  // fxy_add: 此处的向量数检查是冗余但安全的，因为上面已经 continue
+                  if (sel >= query_min_selectivity && sel <= query_max_selectivity && result.size() >= (size_t)min_vectors_for_fallback)
+                  {
+                     rare_label_to_templates_map[rare_label].push_back({combo, result});
+                     generated = true;
+                     std::cout << "  [生成] 稀有标签 " << rare_label << " 组合: {";
+                     for (size_t k = 0; k < combo.size(); ++k)
+                        std::cout << combo[k] << (k + 1 < combo.size() ? "," : "");
+                     std::cout << "} 选择率 " << sel * 100 << "% (" << result.size() << " vectors)" << std::endl;
+                     break;
+                  }
+
+                  // fxy_add: 记录最接近的组合时，也必须满足向量数下限
+                  // (由于上面的continue，这里的检查也是冗余但安全的)
+                  if (diff < best_diff && result.size() >= (size_t)min_vectors_for_fallback)
+                  {
+                     best_diff = diff;
+                     best_template = {combo, result};
+                  }
+               }
+            }
+
+            // 如果还是没生成，使用满足条件的最佳兜底
+            if (!generated && !best_template.matching_vectors.empty())
+            {
+               // fxy_add: 这里的 best_template 已经保证了向量数 >= min_vectors_for_fallback
+               rare_label_to_templates_map[rare_label].push_back(best_template);
+               std::cout << "  [兜底] 稀有标签 " << rare_label << " 组合: {";
+               for (size_t k = 0; k < best_template.labels.size(); ++k)
+                  std::cout << best_template.labels[k] << (k + 1 < best_template.labels.size() ? "," : "");
+               std::cout << "} 最接近选择率: "
+                         << (float)best_template.matching_vectors.size() / _num_points * 100 << "% ("
+                         << best_template.matching_vectors.size() << " vectors)" << std::endl;
+            }
+            else if (!generated)
+            {
+               std::cout << "  [失败] 稀有标签 " << rare_label << " 未能生成满足条件的模板 (向量数需 >= " << min_vectors_for_fallback << ")" << std::endl;
+            }
+         }
+
+         total_templates = 0;
+         for (auto &p : rare_label_to_templates_map)
+            total_templates += p.second.size();
+         std::cout << "[完成] 带方向的随机生成完成，总模板数: " << total_templates << std::endl;
+      }
+
+      // --- 阶段 4: 轮流抽样并生成最终查询文件 ---
+      std::cout << "[步骤 4/5] 正在轮流从模板库中抽样并生成查询文件..." << std::endl;
+      start_time = std::chrono::high_resolution_clock::now();
+
+      // fxy_add: --- [修正死循环] ---
+      // 1. 创建一个只包含可用稀有标签的列表
+      std::vector<LabelType> usable_rare_labels;
+      for (const auto &rare_label : top_n_rare_labels)
+      {
+         if (rare_label_to_templates_map.count(rare_label) && !rare_label_to_templates_map.at(rare_label).empty())
+         {
+            usable_rare_labels.push_back(rare_label);
+         }
+      }
+
+      // 2. 如果没有任何标签是可用的，则无法生成查询
+      if (usable_rare_labels.empty())
+      {
+         std::cerr << "[错误] 没有任何稀有标签成功生成了查询模板，无法继续生成查询。" << std::endl;
+         return;
+      }
+      std::cout << " - [信息] " << top_n_rare_labels.size() << " 个稀有标签中，有 " << usable_rare_labels.size() << " 个可用于生成查询。" << std::endl;
+      // fxy_add: --- [修正结束] ---
+
+      std::string fvec_filename = output_prefix + "/" + dataset + "_query.fvecs";
+      std::string label_filename = output_prefix + "/" + dataset + "_query_labels.txt";
+      std::string stats_filename = output_prefix + "/" + dataset + "_query_stats.txt";
+      std::string source_group_filename = output_prefix + "/" + dataset + "_query_source_groups.txt";
+
+      std::ofstream fvec_file(fvec_filename, std::ios::binary);
+      std::ofstream label_file(label_filename);
+      std::ofstream stats_file(stats_filename);
+      std::ofstream source_group_file(source_group_filename);
+
+      if (!fvec_file.is_open() || !label_file.is_open() || !stats_file.is_open() || !source_group_file.is_open())
+      {
+         std::cerr << "[错误] 无法打开一个或多个输出文件。" << std::endl;
+         return;
+      }
+
+      uint32_t dim = _base_storage->get_dim();
+      std::random_device rd;
+      std::mt19937 gen(rd());
+
+      struct GeneratedQueryInfo
+      {
+         int id;
+         int coverage_count;
+         float selectivity;
+         int max_depth;
+         std::vector<LabelType> labels;
+      };
+      std::vector<GeneratedQueryInfo> generated_queries_info;
+      int queries_generated = 0;
+
+      for (int i = 0; i < N; ++i)
+      {
+         // fxy_add: [修正] 从“可用”标签列表中轮流选择
+         const auto &current_rare_label = usable_rare_labels[queries_generated % usable_rare_labels.size()];
+
+         // fxy_add: [修正] 以下检查不再需要，因为列表中的所有标签都保证是可用的
+         // if (rare_label_to_templates_map.find(current_rare_label) == ... )
+         // {
+         //     i--;
+         //     continue;
+         // }
+
+         const auto &template_pool = rare_label_to_templates_map.at(current_rare_label);
+         std::uniform_int_distribution<size_t> template_dist(0, template_pool.size() - 1);
+         const auto &T = template_pool[template_dist(gen)];
+
+         const auto &all_matching_vectors = T.matching_vectors;
+         if (all_matching_vectors.empty())
+         {
+            // 理论上不应发生，因为我们在兜底模式已过滤了空结果，但作为安全措施保留
+            i--; // 如果真的发生了，还是需要作废本次循环
+            continue;
+         }
+
+         int max_depth = -1;
+         std::vector<IdxType> deepest_matching_vectors;
+         for (IdxType vec_idx : all_matching_vectors)
+         {
+            IdxType group_id = _new_vec_id_to_group_id[vec_idx];
+            int current_depth = _lng_node_depths[group_id];
+            if (current_depth > max_depth)
+            {
+               max_depth = current_depth;
+               deepest_matching_vectors.clear();
+               deepest_matching_vectors.push_back(vec_idx);
+            }
+            else if (current_depth == max_depth)
+            {
+               deepest_matching_vectors.push_back(vec_idx);
+            }
+         }
+
+         const std::vector<IdxType> *pool_to_use = &all_matching_vectors;
+         if (!deepest_matching_vectors.empty())
+         {
+            pool_to_use = &deepest_matching_vectors;
+         }
+
+         if (pool_to_use->empty())
+         {
+            i--;
+            continue;
+         }
+
+         std::uniform_int_distribution<size_t> vec_dist(0, pool_to_use->size() - 1);
+         IdxType query_vec_id = (*pool_to_use)[vec_dist(gen)];
+
+         for (size_t j = 0; j < T.labels.size(); ++j)
+         {
+            label_file << T.labels[j] << (j == T.labels.size() - 1 ? "" : ",");
+         }
+         label_file << "\n";
+
+         const char *vec_data = _base_storage->get_vector(query_vec_id);
+         fvec_file.write(reinterpret_cast<const char *>(&dim), sizeof(uint32_t));
+         fvec_file.write(vec_data, dim * sizeof(float));
+
+         IdxType source_group_id = _new_vec_id_to_group_id[query_vec_id];
+         source_group_file << source_group_id << "\n";
+
+         int coverage_count = all_matching_vectors.size();
+         generated_queries_info.push_back({queries_generated + 1, coverage_count, (float)coverage_count / _num_points, max_depth, T.labels});
+         queries_generated++;
+      }
+
+      fvec_file.close();
+      label_file.close();
+      source_group_file.close();
+      end_time = std::chrono::high_resolution_clock::now();
+      std::cout << " - 完成，成功生成 " << queries_generated << " 个查询。耗时: " << std::chrono::duration<double, std::milli>(end_time - start_time).count() << " ms" << std::endl;
+
+      // --- 阶段 5: 写入统计信息 ---
+      std::cout << "[步骤 5/5] 正在写入统计信息..." << std::endl;
+
+      stats_file << "--- Hard Top-N Rare Label Query Generation Stats ---" << std::endl;
+      auto now = std::chrono::system_clock::now();
+      auto in_time_t = std::chrono::system_clock::to_time_t(now);
+#pragma warning(suppress : 4996) // 禁用VS对localtime的警告
+      stats_file << "生成时间: " << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d %X") << std::endl;
+
+      stats_file << "\n--- Summary ---" << std::endl;
+      stats_file << "成功生成的查询总数: " << queries_generated << " / " << N << std::endl;
+      stats_file << "用于生成的有效模板总数: " << total_templates << std::endl;
+
+      if (!generated_queries_info.empty())
+      {
+         long long total_coverage = 0;
+         int min_coverage = generated_queries_info[0].coverage_count;
+         int max_coverage = generated_queries_info[0].coverage_count;
+         for (const auto &info : generated_queries_info)
+         {
+            total_coverage += info.coverage_count;
+            min_coverage = std::min(min_coverage, info.coverage_count);
+            max_coverage = std::max(max_coverage, info.coverage_count);
+         }
+         float avg_coverage = (float)total_coverage / generated_queries_info.size();
+         stats_file << "\n--- Coverage Stats of Generated Queries ---" << std::endl;
+         stats_file << "最小覆盖向量数: " << min_coverage << " (" << std::fixed << std::setprecision(5) << (float)min_coverage / _num_points * 100 << "%)" << std::endl;
+         stats_file << "最大覆盖向量数: " << max_coverage << " (" << (float)max_coverage / _num_points * 100 << "%)" << std::endl;
+         stats_file << "平均覆盖向量数: " << avg_coverage << " (" << (float)avg_coverage / _num_points * 100 << "%)" << std::endl;
+      }
+
+      stats_file << "\n--- Parameters Used ---" << std::endl;
+      stats_file << " - num_rare_labels_to_use: " << num_rare_labels_to_use << " (实际使用: " << top_n_rare_labels.size() << ")" << std::endl;
+      stats_file << " - query_min_selectivity: " << query_min_selectivity << std::endl;
+      stats_file << " - query_max_selectivity: " << query_max_selectivity << std::endl;
+
+      stats_file << "\n--- Top-N Rare Labels Used (Label, Frequency) ---" << std::endl;
+      for (const auto &pair : top_n_rare_labels_with_freq)
+      {
+         stats_file << " - " << pair.first << ", " << pair.second << std::endl;
+      }
+
+      stats_file << "\n--- Detailed Query List ---" << std::endl;
+      stats_file << "ID, CoverageCount, Selectivity(%), MaxDepth, Labels" << std::endl;
+      for (const auto &info : generated_queries_info)
+      {
+         stats_file << info.id << ", " << info.coverage_count << ", "
+                    << std::fixed << std::setprecision(5) << info.selectivity * 100 << ", "
+                    << info.max_depth << ", "
+                    << "{";
+         for (size_t j = 0; j < info.labels.size(); ++j)
+         {
+            stats_file << info.labels[j] << (j == info.labels.size() - 1 ? "" : ",");
+         }
+         stats_file << "}" << std::endl;
+      }
+
+      stats_file.close();
+
+      auto all_end_time = std::chrono::high_resolution_clock::now();
+      std::cout << "\n--- “困难Top-N稀有标签”查询生成完毕 ---" << std::endl;
+      std::cout << "总耗时: " << std::chrono::duration<double, std::milli>(all_end_time - all_start_time).count() << " ms" << std::endl;
+      std::cout << "查询向量已保存到: " << fvec_filename << std::endl;
+      std::cout << "查询标签已保存到: " << label_filename << std::endl;
+      std::cout << "生成统计已保存到: " << stats_filename << std::endl;
+      std::cout << "查询来源组ID已保存到: " << source_group_filename << std::endl;
+      std::cout << "========================================================" << std::endl;
+   }
+
+   // ===================================end：限制覆盖率的查询任务生成=========================================
 }
