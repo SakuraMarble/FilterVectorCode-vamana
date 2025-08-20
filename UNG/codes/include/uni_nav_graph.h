@@ -32,7 +32,8 @@ namespace ANNS
       size_t num_lng_descendants;
       bool is_global_search;
 
-      size_t query_length; // 查询长度
+      size_t query_length;            // 查询长度
+      long long trie_nodes_traversed; // 存储两种方法的总遍历节点数
 
       // 方法一相关
       size_t candidate_set_size;
@@ -102,7 +103,7 @@ namespace ANNS
                          std::vector<QueryStats> &query_stats,
                          std::vector<std::bitset<10000001>> &bitmaps,
                          bool is_ori_ung,
-                         bool is_select_entry_groups,
+                         bool is_select_entry_groups, bool is_rec_more_start,
                          const std::vector<IdxType> &true_query_group_ids = {}); // 包含每个查询其真实来源组ID的向量
 
       // I/O
@@ -228,7 +229,7 @@ namespace ANNS
       void get_min_super_sets_debug(const std::vector<LabelType> &query_label_set,
                                     std::vector<IdxType> &min_super_set_ids,
                                     bool avoid_self, bool need_containment,
-                                    std::atomic<int> &print_counter, bool is_new_trie_method, QueryStats &stats);
+                                    std::atomic<int> &print_counter, bool is_new_trie_method, bool is_rec_more_start, QueryStats &stats);
       void cal_f_coverage_ratio();
       void build_label_nav_graph();
       size_t count_all_descendants(IdxType group_id) const;

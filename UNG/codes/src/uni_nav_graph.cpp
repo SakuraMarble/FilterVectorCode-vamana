@@ -215,7 +215,7 @@ namespace ANNS
    void UniNavGraph::get_min_super_sets_debug(const std::vector<LabelType> &query_label_set,
                                               std::vector<IdxType> &min_super_set_ids,
                                               bool avoid_self, bool need_containment,
-                                              std::atomic<int> &print_counter, bool is_new_trie_method, QueryStats &stats)
+                                              std::atomic<int> &print_counter, bool is_new_trie_method, bool is_rec_more_start, QueryStats &stats)
    {
       // --- 计时器变量定义 ---
       double time_trie_lookup = 0.0;
@@ -237,11 +237,15 @@ namespace ANNS
          TrieSearchMetricsRecursive trie_metrics_m2 = {};
 
          // 2. 调用修改后的 TrieIndex 方法，将结构体传入
-         _trie_index.get_super_set_entrances_new_more_sp_debug(query_label_set, candidates, avoid_self, need_containment, print_counter, trie_metrics_m2);
+         if (is_rec_more_start)
+            _trie_index.get_super_set_entrances_new_more_sp_debug(query_label_set, candidates, avoid_self, need_containment, print_counter, trie_metrics_m2);
+         else
+            _trie_index.get_super_set_entrances_new_debug(query_label_set, candidates, avoid_self, need_containment, print_counter, trie_metrics_m2);
 
          // 3. 将从底层获取的指标填充到高层的 QueryStats 中
          stats.recursive_calls = trie_metrics_m2.recursive_calls;
          stats.pruning_events = trie_metrics_m2.pruning_events;
+         stats.trie_nodes_traversed = trie_metrics_m2.recursive_calls + trie_metrics_m2.nodes_processed_in_bfs;
 
          // 4. 计算并填充衍生指标：剪枝效率
          if (stats.recursive_calls > 0)
@@ -264,6 +268,7 @@ namespace ANNS
 
          // 3. 将从底层获取的指标填充到高层的 QueryStats 中
          stats.successful_checks = trie_metrics_m1.successful_checks;
+         stats.trie_nodes_traversed = trie_metrics_m1.upward_traversals + trie_metrics_m1.bfs_nodes_processed;
 
          // 4. 计算并填充衍生指标：捷径命中率
          if (stats.candidate_set_size > 0)
@@ -2263,7 +2268,7 @@ namespace ANNS
                                    std::vector<QueryStats> &query_stats,
                                    std::vector<std::bitset<10000001>> &bitmaps,
                                    bool is_ori_ung,
-                                   bool is_new_trie_method,
+                                   bool is_new_trie_method, bool is_rec_more_start,
                                    const std::vector<IdxType> &true_query_group_ids)
    {
       auto num_queries = query_storage->get_num_points();
@@ -2315,7 +2320,7 @@ namespace ANNS
          static std::atomic<int> trie_debug_print_counter{0};
          auto get_min_super_sets_satrt_time = std::chrono::high_resolution_clock::now();
          get_min_super_sets_debug(query_labels, entry_group_ids, true, true,
-                                  trie_debug_print_counter, is_new_trie_method, stats);
+                                  trie_debug_print_counter, is_new_trie_method, is_rec_more_start, stats);
          stats.get_min_super_sets_time_ms = std::chrono::duration<double, std::milli>(
                                                 std::chrono::high_resolution_clock::now() - get_min_super_sets_satrt_time)
                                                 .count();

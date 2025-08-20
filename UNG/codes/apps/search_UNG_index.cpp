@@ -46,10 +46,10 @@ int main(int argc, char **argv)
    ANNS::IdxType K, num_entry_points;
    std::vector<ANNS::IdxType> Lsearch_list;
    uint32_t num_threads;
-   bool is_new_method = false;      // true: use new method
-   bool is_ori_ung = false;         // true: use original ung
-   bool is_new_trie_method = false; // false:默认的mini entry groups
-   int num_repeats = 1;             // 默认重复1次
+   bool is_new_method = false;                                 // true: use new method
+   bool is_ori_ung = false;                                    // true: use original ung
+   bool is_new_trie_method = false, is_rec_more_start = false; // false:默认的UNG原始trie tree方法,true：递归；false:默认的root
+   int num_repeats = 1;                                        // 默认重复1次
 
    try
    {
@@ -93,6 +93,8 @@ int main(int argc, char **argv)
                          "is_ori_ung");
       desc.add_options()("is_new_trie_method", po::value<bool>(&is_new_trie_method)->required(),
                          "is_new_trie_method");
+      desc.add_options()("is_rec_more_start", po::value<bool>(&is_rec_more_start)->required(),
+                         "is_rec_more_start");
       desc.add_options()("num_repeats", po::value<int>(&num_repeats)->default_value(1),
                          "Number of repeats for each Lsearch value");
 
@@ -183,7 +185,7 @@ int main(int argc, char **argv)
             index.search(query_storage, distance_handler, num_threads, Lsearch_list[LsearchId], num_entry_points, scenario, K, results, num_cmps, bitmap);
          else
             index.search_hybrid(query_storage, distance_handler, num_threads, Lsearch_list[LsearchId],
-                                num_entry_points, scenario, K, results, num_cmps, query_stats[repeat][LsearchId], bitmap, is_ori_ung, is_new_trie_method, true_query_group_ids);
+                                num_entry_points, scenario, K, results, num_cmps, query_stats[repeat][LsearchId], bitmap, is_ori_ung, is_new_trie_method, is_rec_more_start, true_query_group_ids);
          auto time_cost = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
          for (int i = 0; i < num_queries; ++i)
             query_stats[repeat][LsearchId][i].recall = calculate_single_query_recall(gt + i * K, results + i * K, K);
@@ -194,7 +196,7 @@ int main(int argc, char **argv)
    std::ofstream detail_out(result_path_prefix + "query_details_repeat" + std::to_string(num_repeats) + ".csv");
    detail_out << "repeat,Lsearch,QueryID,Time_ms,MinSupersetT_ms,EntryGroupT_ms,DescMergeT_ms,CovMergeT_ms,"
               << "FlagT_ms,BitmapT_ms,SearchT_ms,DistCalcs,NumEntries,NumDescendants,TotalCoverage,QuerySize,"
-              << "CandSize,SuccessChecks,HitRatio,RecurCalls,PruneEvents,PruneEff,"
+              << "CandSize,SuccessChecks,HitRatio,RecurCalls,PruneEvents,PruneEff,TrieNodePass,"
               << "QPS,Recall,IsGlobal\n";
    for (int repeat = 0; repeat < num_repeats; repeat++)
    {
@@ -225,6 +227,7 @@ int main(int argc, char **argv)
                        << query_stats[repeat][LsearchId][i].recursive_calls << ","
                        << query_stats[repeat][LsearchId][i].pruning_events << ","
                        << query_stats[repeat][LsearchId][i].pruning_efficiency << ","
+                       << query_stats[repeat][LsearchId][i].trie_nodes_traversed << ","
                        << 1000.0 / (query_stats[repeat][LsearchId][i].time_ms) << ","
                        << query_stats[repeat][LsearchId][i].recall << ","
                        << query_stats[repeat][LsearchId][i].is_global_search << "\n";
