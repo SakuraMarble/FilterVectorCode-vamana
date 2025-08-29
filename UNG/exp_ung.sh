@@ -43,6 +43,7 @@ cat "$CONFIG_FILE" | jq -c '.experiments[]' | while read -r experiment; do
         --generate_query "$(echo "$experiment" | jq -r '.generate_query')" \
         --generate_query_task "$(echo "$experiment" | jq -r '.generate_query_task')" \
         --method1_high_coverage_p "$(echo "$experiment" | jq -r '.method1_high_coverage_p')" \
+        --is_ung_more_entry "$(echo "$experiment" | jq -r '.ung_more_entry_param.is_ung_more_entry')" \
         --ung_and_acorn "$(echo "$experiment" | jq -r '.ung_and_acorn_param.ung_and_acorn')" \
         --new_edge_policy "$(echo "$experiment" | jq -r '.ung_and_acorn_param.new_edge_policy')" \
         --R_in_add_new_edge "$(echo "$experiment" | jq -r '.ung_and_acorn_param.R_in_add_new_edge')" \

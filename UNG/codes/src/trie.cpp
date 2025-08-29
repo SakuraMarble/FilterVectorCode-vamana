@@ -34,9 +34,9 @@ namespace ANNS
             if (label > _max_label_id)
             {
                _max_label_id = label;
-               _label_to_nodes.resize(_max_label_id + 1);
+               //_label_to_nodes.resize(_max_label_id + 1);
             }
-            // _label_to_nodes.resize(_max_label_id + 1);
+            _label_to_nodes.resize(_max_label_id + 1);
             _label_to_nodes[label].push_back(cur->children[label]);
          }
          cur = cur->children[label];
@@ -151,6 +151,9 @@ namespace ANNS
       long long bfs_nodes_processed = 0;
       long long upward_traversal_nodes = 0; // 用于累加向上回溯的节点数
 
+      std::unordered_set<std::shared_ptr<TrieNode>> visited_upward_nodes;
+      long long redundant_upward_traversals = 0;
+
       // find the existing node for the input label set
       std::shared_ptr<TrieNode> avoided_node = nullptr;
       if (avoid_self)
@@ -177,7 +180,8 @@ namespace ANNS
             for (auto node : candidates_from_map)
             {
                examine_containment_calls++; // [METRIC]
-               if (examine_containment_debug(label_set, node, upward_traversal_nodes))
+               // if (examine_containment_debug(label_set, node, upward_traversal_nodes))
+               if (examine_containment_debug(label_set, node, upward_traversal_nodes, visited_upward_nodes, redundant_upward_traversals))
                {
                   successful_containment_checks++; // [METRIC]
                   q.push(node);
@@ -211,6 +215,7 @@ namespace ANNS
       metrics.initial_candidates = initial_candidates_from_map;
       metrics.successful_checks = successful_containment_checks;
       metrics.upward_traversals = upward_traversal_nodes;
+      metrics.redundant_upward_steps = redundant_upward_traversals;
 
       // --- Phase 2: Downward BFS Search ---
       auto start_bfs = std::chrono::high_resolution_clock::now();
@@ -250,6 +255,7 @@ namespace ANNS
                       << "   - Initial candidates from map: " << initial_candidates_from_map << "\n"
                       << "   - `examine_containment` calls: " << examine_containment_calls << "\n"
                       << "   - Nodes traversed UPWARDS: " << upward_traversal_nodes << " <--- (New Metric)\n" // 新指标
+                      << "   - Redundant upward traversals: " << redundant_upward_traversals << "\n"
                       << "   - Successful checks (queue size): " << successful_containment_checks << "\n"
                       << "   - Time for this phase: " << time_candidate_gen << " ms\n"
                       << "--- Phase 2: Downward BFS ---\n"
@@ -523,20 +529,62 @@ namespace ANNS
       return true;
    }
 
-   // fxy_add: debug版本的 examine_containment，增加了节点遍历计数
+   // // fxy_add: debug版本的 examine_containment，增加了节点遍历计数
+   // bool TrieIndex::examine_containment_debug(const std::vector<LabelType> &label_set,
+   //                                           const std::shared_ptr<TrieNode> &node,
+   //                                           long long &nodes_traversed) const
+   // {
+   //    auto cur = node->parent;
+   //    nodes_traversed++; // <--- 计数起始节点（的父节点）
+   //    for (int64_t i = label_set.size() - 2; i >= 0; --i)
+   //    {
+   //       while (cur->label > label_set[i] && cur->parent != nullptr)
+   //       {
+   //          cur = cur->parent;
+   //          nodes_traversed++; // <--- 在循环中计数每次向上移动
+   //       }
+   //       if (cur->parent == nullptr || cur->label != label_set[i])
+   //          return false;
+   //    }
+   //    return true;
+   // }
+
+   // fxy_add: debug版本的 examine_containment，增加了节点遍历计数和冗余访问检测
    bool TrieIndex::examine_containment_debug(const std::vector<LabelType> &label_set,
                                              const std::shared_ptr<TrieNode> &node,
-                                             long long &nodes_traversed) const
+                                             long long &nodes_traversed,
+                                             std::unordered_set<std::shared_ptr<TrieNode>> &visited_upward,
+                                             long long &redundant_steps) const
    {
       auto cur = node->parent;
-      nodes_traversed++; // <--- 计数起始节点（的父节点）
+      if (!cur)
+         return false; // 安全检查
+
+      nodes_traversed++; // 计算第一步
+      if (visited_upward.count(cur))
+      {
+         redundant_steps++; // [新增] 这是一次冗余访问
+      }
+      else
+      {
+         visited_upward.insert(cur); // [新增] 标记为已访问
+      }
 
       for (int64_t i = label_set.size() - 2; i >= 0; --i)
       {
          while (cur->label > label_set[i] && cur->parent != nullptr)
          {
             cur = cur->parent;
-            nodes_traversed++; // <--- 在循环中计数每次向上移动
+            nodes_traversed++; // 计算每一次向上移动
+
+            if (visited_upward.count(cur))
+            {
+               redundant_steps++; // [新增] 这是一次冗余访问
+            }
+            else
+            {
+               visited_upward.insert(cur); // [新增] 标记为已访问
+            }
          }
          if (cur->parent == nullptr || cur->label != label_set[i])
             return false;

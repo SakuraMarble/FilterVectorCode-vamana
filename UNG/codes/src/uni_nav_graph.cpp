@@ -269,6 +269,7 @@ namespace ANNS
          // 3. 将从底层获取的指标填充到高层的 QueryStats 中
          stats.successful_checks = trie_metrics_m1.successful_checks;
          stats.trie_nodes_traversed = trie_metrics_m1.upward_traversals + trie_metrics_m1.bfs_nodes_processed;
+         stats.redundant_upward_steps = trie_metrics_m1.redundant_upward_steps;
 
          // 4. 计算并填充衍生指标：捷径命中率
          if (stats.candidate_set_size > 0)
@@ -1166,12 +1167,17 @@ namespace ANNS
 
    // =====================================begin 计算LNG中后代的个数=========================================
    // fxy_add：使用广度优先搜索（BFS）来确保所有后代都被找到
+   // fxy_add：使用广度优先搜索（BFS）来确保所有后代都被找到
    void UniNavGraph::get_descendants_info()
    {
       std::cout << "Calculating descendants info (using corrected BFS method)..." << std::endl;
       using PairType = std::pair<IdxType, int>;
-      std::vector<PairType> descendants_num(_num_groups);
-      std::vector<std::unordered_set<IdxType>> descendants_set(_num_groups);
+
+      // ------------------- 修改点 1 -------------------
+      // 将大小从 _num_groups 改为 _num_groups + 1
+      // 以便能安全地使用 1-based 索引 (group_id)
+      std::vector<PairType> descendants_num(_num_groups + 1);
+      std::vector<std::unordered_set<IdxType>> descendants_set(_num_groups + 1);
 
       auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -1179,43 +1185,40 @@ namespace ANNS
       for (IdxType group_id = 1; group_id <= _num_groups; ++group_id)
       {
          std::vector<bool> visited(_num_groups + 1, false);
-         std::queue<IdxType> q; // 使用队列 (queue) 而不是栈 (stack)
+         std::queue<IdxType> q;
          std::unordered_set<IdxType> temp_set;
 
-         // 1. 将起始节点标记为已访问，并放入队列以启动遍历
-         //    我们不将起始节点算作自己的后代
          visited[group_id] = true;
          q.push(group_id);
 
-         // 2. 当队列不为空时，持续进行遍历
          while (!q.empty())
          {
             IdxType u = q.front();
             q.pop();
 
-            // 3. 遍历当前节点 u 的所有直接子节点 v
             for (const auto &v : _label_nav_graph->out_neighbors[u])
             {
-               // 4. 如果子节点 v 尚未被访问过
                if (!visited[v])
                {
-                  visited[v] = true;  // 标记为已访问，防止重复处理
-                  temp_set.insert(v); // 将 v 加入后代集合
-                  q.push(v);          // 将 v 入队，以便将来访问它的子节点
+                  visited[v] = true;
+                  temp_set.insert(v);
+                  q.push(v);
                }
             }
          }
 
-         // 5. 保存结果
-         descendants_num[group_id - 1] = PairType(group_id, temp_set.size());
-         descendants_set[group_id - 1] = std::move(temp_set);
+         // ------------------- 修改点 2 -------------------
+         // 使用 group_id 直接作为索引，而不是 group_id - 1
+         // 这与容器的新大小相匹配
+         descendants_num[group_id] = PairType(group_id, temp_set.size());
+         descendants_set[group_id] = std::move(temp_set);
       }
 
-      // 单线程写入类成员变量
+      // 单线程写入类成员变量 (这部分无需修改)
       _label_nav_graph->_lng_descendants_num = std::move(descendants_num);
       _label_nav_graph->_lng_descendants = std::move(descendants_set);
 
-      // 计算平均后代个数
+      // 计算平均后代个数 (这部分无需修改)
       double total_descendants = 0;
       for (const auto &pair : _label_nav_graph->_lng_descendants_num)
       {
@@ -1229,6 +1232,7 @@ namespace ANNS
       std::cout << "- Number of groups: " << _num_groups << std::endl;
       std::cout << "- Average number of descendants per group: " << _label_nav_graph->avg_descendants << std::endl;
    }
+
    // =====================================end 计算LNG中后代的个数=========================================
 
    // =====================================begin 添加新的跨组边=========================================
@@ -2007,8 +2011,26 @@ namespace ANNS
    void UniNavGraph::initialize_roaring_bitsets()
    {
       std::cout << "enter initialize_roaring_bitsets" << std::endl;
+
+      // 打印 _num_groups 的值，确保它是一个预期的、合理的值
+      std::cout << "_num_groups = " << _num_groups << std::endl;
+
+      // 检查指针是否为空
+      if (!_label_nav_graph)
+      {
+         std::cerr << "Error: _label_nav_graph is a null pointer!" << std::endl;
+         return; // 或者抛出异常
+      }
+
       _lng_descendants_rb.resize(_num_groups + 1);
       _covered_sets_rb.resize(_num_groups + 1);
+
+      // 关键诊断：打印所有容器的大小
+      std::cout << "_lng_descendants_rb.size() = " << _lng_descendants_rb.size() << std::endl;
+      std::cout << "_covered_sets_rb.size() = " << _covered_sets_rb.size() << std::endl;
+      std::cout << "_label_nav_graph->_lng_descendants.size() = " << _label_nav_graph->_lng_descendants.size() << std::endl;
+      std::cout << "_label_nav_graph->covered_sets.size() = " << _label_nav_graph->covered_sets.size() << std::endl;
+
       // std::cout << "begin for " << std::endl;
 
       for (IdxType group_id = 1; group_id <= _num_groups; ++group_id)
@@ -2168,7 +2190,7 @@ namespace ANNS
       std::cout << "\r- Finish in " << _build_cross_edges_time << " ms" << std::endl;
    }
 
-   void UniNavGraph::search(std::shared_ptr<IStorage> query_storage, std::shared_ptr<DistanceHandler> distance_handler,
+   /*void UniNavGraph::search(std::shared_ptr<IStorage> query_storage, std::shared_ptr<DistanceHandler> distance_handler,
                             uint32_t num_threads, IdxType Lsearch, IdxType num_entry_points, std::string scenario,
                             IdxType K, std::pair<IdxType, float> *results, std::vector<float> &num_cmps,
                             std::vector<std::bitset<10000001>> &bitmap)
@@ -2256,7 +2278,7 @@ namespace ANNS
          // clean
          search_cache_list.release_cache(search_cache);
       }
-   }
+   }*/
 
    // fxy_add
    void UniNavGraph::search_hybrid(std::shared_ptr<IStorage> query_storage,
@@ -2269,7 +2291,7 @@ namespace ANNS
                                    std::vector<std::bitset<10000001>> &bitmaps,
                                    bool is_ori_ung,
                                    bool is_new_trie_method, bool is_rec_more_start,
-                                   const std::vector<IdxType> &true_query_group_ids)
+                                   bool is_ung_more_entry, const std::vector<IdxType> &true_query_group_ids)
    {
       auto num_queries = query_storage->get_num_points();
       _query_storage = query_storage;
@@ -2317,43 +2339,51 @@ namespace ANNS
          // 计算入口组信息
          auto get_entry_group_start_time = std::chrono::high_resolution_clock::now();
          std::vector<IdxType> entry_group_ids;
-         static std::atomic<int> trie_debug_print_counter{0};
-         auto get_min_super_sets_satrt_time = std::chrono::high_resolution_clock::now();
-         get_min_super_sets_debug(query_labels, entry_group_ids, true, true,
-                                  trie_debug_print_counter, is_new_trie_method, is_rec_more_start, stats);
-         stats.get_min_super_sets_time_ms = std::chrono::duration<double, std::milli>(
-                                                std::chrono::high_resolution_clock::now() - get_min_super_sets_satrt_time)
-                                                .count();
-         stats.num_entry_points = entry_group_ids.size();
 
-         // IdxType true_group_id = 0;
-         // if (id < true_query_group_ids.size())
-         // {
-         //    true_group_id = true_query_group_ids[id]; // 获取当前查询的真实组ID
-         // }
-         // std::vector<IdxType> base_entry_groups;
-         // static std::atomic<int> trie_debug_print_counter{0};
-         // auto get_min_super_sets_satrt_time = std::chrono::high_resolution_clock::now();
-         // get_min_super_sets_debug(query_labels, base_entry_groups, true, true, trie_debug_print_counter);
-         // stats.get_min_super_sets_time_ms = std::chrono::duration<double, std::milli>(
-         //                                        std::chrono::high_resolution_clock::now() - get_min_super_sets_satrt_time)
-         //                                        .count();
-         // const size_t extra_k = base_entry_groups.size() / 5;
-         // const SelectionMode current_mode = SelectionMode::SizeAndDistance;
-         // const double beta_value = 1.0;
-         // entry_group_ids = select_entry_groups(
-         //     base_entry_groups,
-         //     current_mode,
-         //     extra_k,
-         //     beta_value,
-         //     true_group_id);
-         // stats.num_entry_points = entry_group_ids.size();
+         // 是否使用更多的入口组
+         if (!is_ung_more_entry)
+         {
+            static std::atomic<int> trie_debug_print_counter{0};
+            auto get_min_super_sets_satrt_time = std::chrono::high_resolution_clock::now();
+            get_min_super_sets_debug(query_labels, entry_group_ids, true, true,
+                                     trie_debug_print_counter, is_new_trie_method, is_rec_more_start, stats);
+            stats.get_min_super_sets_time_ms = std::chrono::duration<double, std::milli>(
+                                                   std::chrono::high_resolution_clock::now() - get_min_super_sets_satrt_time)
+                                                   .count();
+            stats.num_entry_points = entry_group_ids.size();
+         }
+         else
+         {
 
+            IdxType true_group_id = 0;
+            if (id < true_query_group_ids.size())
+            {
+               true_group_id = true_query_group_ids[id]; // 获取当前查询的真实组ID
+            }
+            std::vector<IdxType> base_entry_groups;
+            static std::atomic<int> trie_debug_print_counter{0};
+            auto get_min_super_sets_satrt_time = std::chrono::high_resolution_clock::now();
+            get_min_super_sets_debug(query_labels, base_entry_groups, true, true,
+                                     trie_debug_print_counter, is_new_trie_method, is_rec_more_start, stats);
+            stats.get_min_super_sets_time_ms = std::chrono::duration<double, std::milli>(
+                                                   std::chrono::high_resolution_clock::now() - get_min_super_sets_satrt_time)
+                                                   .count();
+            const size_t extra_k = base_entry_groups.size() / 5;
+            const SelectionMode current_mode = SelectionMode::SizeAndDistance;
+            const double beta_value = 1.0;
+            entry_group_ids = select_entry_groups(
+                base_entry_groups,
+                current_mode,
+                extra_k,
+                beta_value,
+                true_group_id);
+            stats.num_entry_points = entry_group_ids.size();
+         }
          stats.get_group_entry_time_ms = std::chrono::duration<double, std::milli>(
                                              std::chrono::high_resolution_clock::now() - get_entry_group_start_time)
                                              .count();
 
-         // 计算flag
+         // idea:计算flag
          auto flag_start_time = std::chrono::high_resolution_clock::now();
          stats.num_lng_descendants = [&]()
          {
@@ -2480,7 +2510,7 @@ namespace ANNS
 
                // 执行搜索
                num_cmps[id] = iterate_to_fixed_point(query, search_cache, id,
-                                                     entry_points, true, false);
+                                                     entry_points, stats.num_nodes_visited, true, false);
                stats.num_distance_calcs = num_cmps[id];
 
                // 收集结果
@@ -2511,7 +2541,7 @@ namespace ANNS
                   continue;
                }
 
-               num_cmps[id] = iterate_to_fixed_point(query, search_cache, id, entry_points);
+               num_cmps[id] = iterate_to_fixed_point(query, search_cache, id, entry_points, stats.num_nodes_visited);
                stats.num_distance_calcs = num_cmps[id];
                cur_result = search_cache->search_queue;
             }
@@ -2605,6 +2635,7 @@ namespace ANNS
 
    IdxType UniNavGraph::iterate_to_fixed_point(const char *query, std::shared_ptr<SearchCache> search_cache,
                                                IdxType target_id, const std::vector<IdxType> &entry_points,
+                                               size_t &num_nodes_visited,
                                                bool clear_search_queue, bool clear_visited_set)
    {
       auto dim = _base_storage->get_dim();
@@ -2643,6 +2674,8 @@ namespace ANNS
             if (visited_set.check(neighbor))
                continue;
             visited_set.set(neighbor);
+
+            num_nodes_visited++; // search过程中遍历的点的个数
 
             // push to search queue
             search_queue.insert(neighbor, _distance_handler->compute(query, _base_storage->get_vector(neighbor), dim));
@@ -2988,15 +3021,64 @@ namespace ANNS
    }
 
    // ===================================begin：生成query task========================================
-   // fxy_add: 根据LNG中f点，生成查询向量和标签
-   void UniNavGraph::query_generate(std::string &output_prefix, int n, float keep_prob, bool stratified_sampling, bool verify)
+   // fxy_add:计算一个标签子集在整个数据集中被包含的次数
+   int UniNavGraph::count_subset_occurrences(const std::vector<unsigned int> &sorted_subset)
    {
+      // 步骤1: 检查缓存中是否已有记录
+      auto it = _subset_count_cache.find(sorted_subset);
+      if (it != _subset_count_cache.end())
+      {
+         return it->second; // 缓存命中，直接返回结果
+      }
+
+      // 步骤2: 缓存未命中，遍历整个数据集进行计算
+      int count = 0;
+      for (ANNS::IdxType i = 0; i < _num_points; ++i)
+      {
+         const auto &base_labels = _base_storage->get_label_set(i);
+
+         // 优化: 如果基向量的标签数量少于子集，它不可能包含该子集
+         if (base_labels.size() < sorted_subset.size())
+         {
+            continue;
+         }
+
+         // 检查 base_labels 是否是 sorted_subset 的超集
+         bool is_superset = true;
+         for (int label_in_subset : sorted_subset)
+         {
+            // 在基向量的标签集中查找是否存在子集中的每一个标签
+            if (std::find(base_labels.begin(), base_labels.end(), label_in_subset) == base_labels.end())
+            {
+               is_superset = false; // 只要有一个标签不匹配，就不是超集
+               break;
+            }
+         }
+
+         if (is_superset)
+         {
+            count++;
+         }
+      }
+
+      // 步骤3: 将计算结果存入缓存，供后续使用
+      _subset_count_cache[sorted_subset] = count;
+      return count;
+   }
+
+   // fxy_add: 根据LNG中f点，生成查询向量和标签
+   void UniNavGraph::query_generate(std::string &output_prefix, int n, float keep_prob, int K, bool stratified_sampling, bool verify)
+   {
+      // 在每次调用开始时清空缓存，确保不同生成任务之间的结果是独立的
+      _subset_count_cache.clear();
+
       std::ofstream fvec_file(output_prefix + FVEC_EXT, std::ios::binary);
       std::ofstream txt_file(output_prefix + "_labels" + TXT_EXT);
 
       uint32_t dim = _base_storage->get_dim();
       std::cout << "Vector dimension: " << dim << std::endl;
       std::cout << "Number of points: " << _num_points << std::endl;
+      std::cout << "Minimum occurrence threshold (K): " << K << std::endl;
 
       // 随机数生成器
       std::random_device rd;
@@ -3006,11 +3088,10 @@ namespace ANNS
       std::vector<QueryTask> all_queries;
       size_t total_queries = 0;
 
-      // min(7000个查询,_num_groups)
-      total_queries = std::min(300, int(_num_groups));
+      // min(10000个查询,_num_groups)
+      total_queries = std::min(10000, int(_num_groups));
       for (ANNS::IdxType group_id = 1; group_id <= total_queries; ++group_id)
       {
-         // std::cout << "group_id: " << group_id << std::endl;
          auto [start, end] = _group_id_to_range[group_id];
          size_t group_size = end - start;
          if (group_size == 0)
@@ -3024,7 +3105,7 @@ namespace ANNS
          }
          sample_num = std::min(sample_num, static_cast<int>(group_size));
 
-         // 非重复采样
+         // 非重复采样 (逻辑不变)
          std::vector<ANNS::IdxType> vec_ids(group_size);
          std::iota(vec_ids.begin(), vec_ids.end(), start);
          std::shuffle(vec_ids.begin(), vec_ids.end(), gen);
@@ -3054,6 +3135,21 @@ namespace ANNS
                task.labels.push_back(*_group_id_to_label_set[group_id].begin());
             }
 
+            // ==================== 新增核心逻辑: 检查出现次数是否满足 K ====================
+            // 为了能够使用map作为缓存的key，必须对标签进行排序，以获得一个唯一的表示
+            auto sorted_labels = task.labels;
+            std::sort(sorted_labels.begin(), sorted_labels.end());
+
+            // 调用辅助函数计算或从缓存中获取该标签组合的出现次数
+            int occurrences = count_subset_occurrences(sorted_labels);
+
+            // 如果出现次数小于K，则这个查询不合格，直接丢弃并开始下一次循环
+            if (occurrences < K)
+            {
+               continue;
+            }
+            // ========================================================================
+
             // 验证标签是组的子集
             if (verify)
             {
@@ -3069,13 +3165,10 @@ namespace ANNS
       }
 
       // 写入fvecs文件前验证标签
-      std::ofstream verify_file(output_prefix + "_verify.txt"); // 新增验证输出文件
+      std::ofstream verify_file(output_prefix + "_verify.txt");
       for (const auto &task : all_queries)
       {
-         // 获取基础存储中的原始标签集
          const auto &original_labels = _base_storage->get_label_set(task.vec_id);
-
-         // 写入验证文件（无论是否开启verify都记录）
          verify_file << task.vec_id << " base_labels:";
          for (auto l : original_labels)
             verify_file << " " << l;
@@ -3084,7 +3177,6 @@ namespace ANNS
             verify_file << " " << l;
          verify_file << "\n";
 
-         // 验证查询标签是原始标签的子集
          if (verify)
          {
             for (auto label : task.labels)
@@ -3092,32 +3184,24 @@ namespace ANNS
                if (std::find(original_labels.begin(), original_labels.end(), label) == original_labels.end())
                {
                   std::cerr << "Error: Label " << label << " not found in original label set for vector " << task.vec_id << std::endl;
-                  std::cerr << "Original labels: ";
-                  for (auto l : original_labels)
-                     std::cerr << l << " ";
-                  std::cerr << "\nQuery labels: ";
-                  for (auto l : task.labels)
-                     std::cerr << l << " ";
-                  std::cerr << std::endl;
                   throw std::runtime_error("Label verification failed");
                }
             }
          }
       }
-      verify_file.close(); // 关闭验证文件
+      verify_file.close();
 
       // 写入fvecs文件
       for (const auto &task : all_queries)
       {
          const char *vec_data = _base_storage->get_vector(task.vec_id);
-         fvec_file.write((char *)&dim, sizeof(uint32_t)); // 每个向量前写维度
+         fvec_file.write((char *)&dim, sizeof(uint32_t));
          fvec_file.write(vec_data, dim * sizeof(float));
       }
 
       // 写入txt文件
       for (const auto &task : all_queries)
       {
-         // txt_file << task.vec_id;
          for (auto label : task.labels)
          {
             txt_file << label << ",";
@@ -3125,15 +3209,15 @@ namespace ANNS
          txt_file << "\n";
       }
 
-      std::cout << "Generated " << all_queries.size() << " queries\n";
+      std::cout << "Generated " << all_queries.size() << " queries (that meet K=" << K << " criteria)\n";
       std::cout << "FVECS file: " << output_prefix + FVEC_EXT << "\n";
-      std::cout << "TXT file: " << output_prefix + TXT_EXT << "\n";
+      std::cout << "TXT file: " << output_prefix + "_labels" + TXT_EXT << "\n";
    }
 
    // fxy_add:根据LNG中f点，生成多个查询任务
    void UniNavGraph::generate_multiple_queries(
        std::string dataset,
-       UniNavGraph &index,
+       UniNavGraph &index, int K,
        const std::string &base_output_path,
        int num_sets,
        int n_per_set,
@@ -3142,22 +3226,17 @@ namespace ANNS
        bool verify)
    {
       std::cout << "enter generate_multiple_queries" << std::endl;
-      namespace fs = std::filesystem;
+      // namespace fs = std::filesystem; // 假设 std::filesystem 已经可用
 
-      // 确保基础目录存在
       fs::create_directories(base_output_path);
 
       for (int i = 1; i <= num_sets; ++i)
       {
          std::cout << "Generating query set " << i << "..." << std::endl;
          std::string folder_name = base_output_path;
-
-         // 创建目录（包括所有必要的父目录）
          fs::create_directories(folder_name);
-
-         std::string output_prefix = folder_name + "/" + dataset + "_query"; // 路径在文件夹内
-         index.query_generate(output_prefix, n_per_set, keep_prob, stratified_sampling, verify);
-
+         std::string output_prefix = folder_name + "/" + dataset + "_query";
+         index.query_generate(output_prefix, n_per_set, keep_prob, K, stratified_sampling, verify);
          std::cout << "Generated query set " << i << " at " << folder_name << std::endl;
       }
    }

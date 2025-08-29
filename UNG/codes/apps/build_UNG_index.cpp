@@ -181,8 +181,9 @@ int main(int argc, char **argv)
       // 生成查询标签和查询向量：(文件名，每个group中有几个查询向量, 每个属性的概率, 是否分层抽样, 是否验证是子集)
       std::cout << "Generating query file ..." << std::endl;
       std::cout << "Query file path: " << query_file_path << std::endl;
-      // index.generate_multiple_queries(dataset, index, query_file_path, 1, 1, 0.5f, false, true); //根据LNG的group生成查询任务
-      if (generate_query_task == "method1_high_coverage") // 极端数据方法1-高覆盖率
+      if (generate_query_task == "gene_by_lng")
+         index.generate_multiple_queries(dataset, index, 10, query_file_path, 1, 1, 0.5f, false, true); // 根据LNG的group生成查询任务
+      else if (generate_query_task == "method1_high_coverage")                                          // 极端数据方法1-高覆盖率
       {
          index.generate_queries_method1_high_coverage(query_file_path, dataset, 1000, base_label_file, method1_high_coverage_p);
       }
@@ -215,8 +216,8 @@ int main(int argc, char **argv)
              dataset,         // 数据集名字
              0.0f,            // 父节点覆盖率至少
              1.0f,            // 子节点覆盖率至多
-             0.0001f,         // 查询选择率至少
-             0.1f             // 查询选择率至多
+             0.00007f,        // 查询选择率至少
+             0.9f             // 查询选择率至多
          );
       }
       else if (generate_query_task == "hard_top_n_rare")
@@ -226,7 +227,7 @@ int main(int argc, char **argv)
              query_file_path, // 输出目录
              dataset,         // 数据集名字
              8,               // top n
-             0.0005f,         // 查询选择率至少
+             0.000005f,       // 查询选择率至少
              0.1f,            // 查询选择率至多
              15);             // 最小频率
       }

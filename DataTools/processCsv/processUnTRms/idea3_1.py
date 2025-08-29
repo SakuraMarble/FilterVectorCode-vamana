@@ -1,3 +1,4 @@
+# 把UNG原始的输出文件整理成csv文件
 import pandas as pd
 import numpy as np
 import os
@@ -8,14 +9,14 @@ import glob
 # 配置区
 BASE_RESULTS_DIR = '/data/fxy/FilterVector/FilterVectorResults'
 TARGET_RECALL = 0.97
-dataset_name = "app_reviews"
+dataset_name = "arxiv"
 OUTPUT_DIR = f"/data/fxy/FilterVector/FilterVectorResults/merge_results/improve2/U_nT_rms/{dataset_name}"
 # ==============================================================================
 
 
 def find_optimal_performance_per_query(df, recall_col, time_col, dist_calcs_col):
     """
-    核心处理函数：对每个QueryID，根据筛选逻辑找到最优性能记录。（此函数无需修改）
+    核心处理函数：对每个QueryID，根据筛选逻辑找到最优性能记录。
     """
     if df.empty or not all(c in df.columns for c in [recall_col, time_col, dist_calcs_col, 'QueryID']):
         return pd.DataFrame()
@@ -24,7 +25,8 @@ def find_optimal_performance_per_query(df, recall_col, time_col, dist_calcs_col)
     cols_to_check = [
         recall_col, time_col, dist_calcs_col, 'QueryID', 'repeat', 'Lsearch',
         'EntryGroupT_ms', 'QuerySize', 'CandSize', 'SuccessChecks',
-        'HitRatio', 'RecurCalls', 'PruneEvents', 'PruneEff','TrieNodePass'
+        'HitRatio', 'RecurCalls', 'PruneEvents', 'PruneEff','TrieNodePass',
+        'M1TrieReNode'
     ]
     for col in cols_to_check:
         if col in df.columns:
@@ -46,7 +48,7 @@ def find_optimal_performance_per_query(df, recall_col, time_col, dist_calcs_col)
             top_recall_group = group[group[recall_col] == max_recall]
             if top_recall_group.empty: continue
             optimal_row = top_recall_group.sort_values(by=time_col, ascending=True).iloc[0]
-
+      #   print(f"[DEBUG] For QueryID {query_id}, selected optimal row is:\n{optimal_row.to_string()}\n")
         optimal_rows.append(optimal_row)
 
     if not optimal_rows:
@@ -61,6 +63,7 @@ def process_matched_triplet(nTfalse_csv_path, nTtrue_rmsfalse_csv_path, nTtrue_r
     """
     try:
         # --- 第1部分: 读取并为每个文件找到最优行 ---
+      #   df_false = pd.read_csv(nTfalse_csv_path)
         df_false = pd.read_csv(nTfalse_csv_path)
         df_false.columns = df_false.columns.str.strip()
         optimal_false = find_optimal_performance_per_query(df_false, 'Recall', 'Time_ms', 'DistCalcs')
@@ -92,10 +95,37 @@ def process_matched_triplet(nTfalse_csv_path, nTtrue_rmsfalse_csv_path, nTtrue_r
 
         for col in shared_cols:
             col_f, col_t, col_t_rms = f'{col}_F', f'{col}_T', f'{col}_T_RMS'
-            if not (comparison_df[col_f].equals(comparison_df[col_t]) and comparison_df[col_f].equals(comparison_df[col_t_rms])):
-                print(f"\n  [ERROR] FATAL: 列 '{col}' 在三个文件中的值不一致！")
-                print("  处理已停止。")
+            # 检查三列是否完全相等
+            are_equal = comparison_df[col_f].equals(comparison_df[col_t]) and comparison_df[col_f].equals(comparison_df[col_t_rms])
+            if not are_equal:
+                print(f"\n   [ERROR] FATAL: 列 '{col}' 在三个文件中的值不一致！")
+                
+                # <--- 修改开始: 增加详细的诊断信息 ---
+                print("   [DEBUG] 正在定位存在差异的具体行...")
+                
+                # 创建一个布尔掩码，标记出任何两个值不相等的行
+                mismatched_mask = (comparison_df[col_f] != comparison_df[col_t]) | \
+                                  (comparison_df[col_f] != comparison_df[col_t_rms])
+                
+                # 过滤出不匹配的行
+                mismatched_rows = comparison_df[mismatched_mask]
+
+                if not mismatched_rows.empty:
+                    # 为了更好地显示，只选择关心的列进行打印
+                    columns_to_show = ['QueryID', col_f, col_t, col_t_rms]
+                    print("   [DEBUG] 以下 QueryID 的值存在差异:")
+                    # 使用 to_string() 确保所有行和列都能被完整打印出来
+                    print(mismatched_rows[columns_to_show].to_string())
+                else:
+                    # 这种情况理论上不应该发生，但作为健壮性检查
+                    print("   [DEBUG] 未能定位到具体的差异行，可能是由于NaN值或数据类型问题导致 .equals() 返回False。")
+
+                # <--- 修改结束 ---
+
+                print("   处理已停止。")
                 return None
+        
+        print("   [INFO] 一致性检查通过：共享列的值在三个文件中均匹配。")
         
         print("  [INFO] 一致性检查通过：共享列的值在三个文件中均匹配。")
 
@@ -104,14 +134,15 @@ def process_matched_triplet(nTfalse_csv_path, nTtrue_rmsfalse_csv_path, nTtrue_r
         cols_to_select_f = [
             'QueryID', 'repeat', 'Lsearch', 'Recall', 'Time_ms', 'DistCalcs',
             'EntryGroupT_ms', 'Search_Only_Time', 'SuccessChecks', 'HitRatio',
-            'QuerySize', 'CandSize','TrieNodePass'
+            'QuerySize', 'CandSize', 'TrieNodePass', 'M1TrieReNode'
         ]
         rename_map_f = {
             'repeat': 'repeat_F', 'Lsearch': 'Lsearch_F', 'Recall': 'Recall_F',
             'Time_ms': 'Time_F(ms)', 'DistCalcs': 'DistCalcs_F',
             'EntryGroupT_ms': 'Get_Entry_Time_F(ms)', 'Search_Only_Time': 'Search_Only_Time_F(ms)',
             'SuccessChecks': 'SuccessChecks_F', 'HitRatio': 'HitRatio_F',
-            'QuerySize': 'QuerySize', 'CandSize': 'CandSize','TrieNodePass':'TrieNodePass_F'
+            'QuerySize': 'QuerySize', 'CandSize': 'CandSize','TrieNodePass':'TrieNodePass_F',
+            'M1TrieReNode': 'M1TrieReNode_F'
         }
         final_false = optimal_false[cols_to_select_f].rename(columns=rename_map_f)
 

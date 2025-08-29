@@ -119,10 +119,10 @@ def recode_atomic_attributes(input_file_paths, output_dir):
 
 if __name__ == '__main__':
     files_to_process = [
-        '/data/fxy/FilterVector/FilterVectorData/app_reviews/app_reviews_base_labels.txt',
+        '/data/fxy/FilterVector/FilterVectorData/VariousTaggedImages/base_9/VariousTaggedImages_base_labels.txt',
     ]
 
-    output_directory = '/data/fxy/FilterVector/FilterVectorData/app_reviews/base_11'
+    output_directory = '/data/fxy/FilterVector/FilterVectorData/VariousTaggedImages/base_10'
 
     
     recode_atomic_attributes(files_to_process, output_directory)

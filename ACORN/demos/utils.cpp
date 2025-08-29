@@ -179,6 +179,10 @@ std::string get_file_name(std::string dataset, bool is_base, std::string BASE_DI
    {
       return BASE_DIR + "/" + (is_base ? "celeba" : "celeba") + ".fvecs";
    }
+   else if (dataset == "celeba_10")
+   {
+      return BASE_DIR + "/" + (is_base ? "celeba_10" : "celeba_10") + ".fvecs";
+   }
    else if (dataset == "VariousTaggedImages")
    {
       return BASE_DIR + "/" + (is_base ? "VariousTaggedImages" : "VariousTaggedImages") + ".fvecs";
@@ -763,6 +767,21 @@ std::vector<std::vector<int>> load_aq_multi(
       // Compose File Name
       std::stringstream filepath_stream;
       filepath_stream << ATTR_DATA_DIR << "/celeba_query_labels.txt";
+      std::string filepath = filepath_stream.str();
+
+      std::vector<std::vector<int>> v =
+          load_txt_to_vector_multi<int>(filepath);
+      printf("loaded query attributes from: %s\n", filepath.c_str());
+      return v;
+   }
+   else if (dataset == "celeba_10")
+   {
+      assert((alpha == -2 || alpha == 0 || alpha == 2) ||
+             !"alpha must be value in [-2, 0, 2]");
+
+      // Compose File Name
+      std::stringstream filepath_stream;
+      filepath_stream << ATTR_DATA_DIR << "/celeba_10_query_labels.txt";
       std::string filepath = filepath_stream.str();
 
       std::vector<std::vector<int>> v =

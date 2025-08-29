@@ -32,6 +32,8 @@ namespace ANNS
       size_t num_lng_descendants;
       bool is_global_search;
 
+      size_t num_nodes_visited = 0; // 用于存储search过程中的节点总数
+
       size_t query_length;            // 查询长度
       long long trie_nodes_traversed; // 存储两种方法的总遍历节点数
 
@@ -39,6 +41,7 @@ namespace ANNS
       size_t candidate_set_size;
       size_t successful_checks = 0;
       float shortcut_hit_ratio = 0.0f;
+      long long redundant_upward_steps = 0; // 向上回溯过程中重复的节点
       // 方法二相关
       size_t recursive_calls = 0;
       size_t pruning_events = 0;
@@ -104,16 +107,20 @@ namespace ANNS
                          std::vector<std::bitset<10000001>> &bitmaps,
                          bool is_ori_ung,
                          bool is_select_entry_groups, bool is_rec_more_start,
-                         const std::vector<IdxType> &true_query_group_ids = {}); // 包含每个查询其真实来源组ID的向量
+                         bool is_ung_more_entry, const std::vector<IdxType> &true_query_group_ids = {}); // 包含每个查询其真实来源组ID的向量
 
       // I/O
       void save(std::string index_path_prefix, std::string results_path_prefix);
       void load(std::string index_path_prefix, const std::string &data_type);
 
       // query generator
-      void query_generate(std::string &output_prefix, int n, float keep_prob, bool stratified_sampling, bool verify);
+
+      std::map<std::vector<unsigned int>, int> _subset_count_cache; // 用于缓存标签组合出现次数的map，避免重复进行昂贵的计算。key是排序后的标签组合，value是其在整个数据集中的出现次数。
+      int count_subset_occurrences(const std::vector<unsigned int> &sorted_subset);
+      void query_generate(std::string &output_prefix, int n, float keep_prob, int K, bool stratified_sampling, bool verify);
       void generate_multiple_queries(std::string dataset,
                                      UniNavGraph &index,
+                                     int K,
                                      const std::string &base_output_path,
                                      int num_sets,
                                      int n_per_set,
@@ -306,6 +313,7 @@ namespace ANNS
       // search in graph
       IdxType iterate_to_fixed_point(const char *query, std::shared_ptr<SearchCache> search_cache,
                                      IdxType target_id, const std::vector<IdxType> &entry_points,
+                                     size_t &num_nodes_visited,
                                      bool clear_search_queue = true, bool clear_visited_set = true);
       // search in global graph
       IdxType iterate_to_fixed_point_global(const char *query, std::shared_ptr<SearchCache> search_cache,

@@ -6,6 +6,7 @@
 #include <memory>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 #include "config.h"
 
 namespace ANNS
@@ -19,6 +20,8 @@ namespace ANNS
 
       long long upward_traversals;   // 向上回溯的节点数
       long long bfs_nodes_processed; // 向下BFS的节点数
+
+      long long redundant_upward_steps = 0; // 向上回溯过程中重复的节点
    };
 
    // fxy_add:用于从方法二(递归法)中收集详细性能指标的结构体
@@ -120,8 +123,12 @@ namespace ANNS
       // help function for get_super_set_entrances
       bool examine_smallest(const std::vector<LabelType> &label_set, const std::shared_ptr<TrieNode> &node) const;
       bool examine_containment(const std::vector<LabelType> &label_set, const std::shared_ptr<TrieNode> &node) const;
-      bool examine_containment_debug(const std::vector<LabelType> &label_set, const std::shared_ptr<TrieNode> &node, long long &nodes_traversed) const;
-
+      // bool examine_containment_debug(const std::vector<LabelType> &label_set, const std::shared_ptr<TrieNode> &node, long long &nodes_traversed) const;
+      bool examine_containment_debug(const std::vector<LabelType> &label_set,
+                                     const std::shared_ptr<TrieNode> &node,
+                                     long long &nodes_traversed,
+                                     std::unordered_set<std::shared_ptr<TrieNode>> &visited_upward,
+                                     long long &redundant_steps) const;
       void find_supersets_recursive_debug(
           std::shared_ptr<TrieNode> current_node,
           const std::vector<LabelType> &sorted_query,
