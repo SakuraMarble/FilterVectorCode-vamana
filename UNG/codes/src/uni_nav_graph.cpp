@@ -1167,15 +1167,11 @@ namespace ANNS
 
    // =====================================begin 计算LNG中后代的个数=========================================
    // fxy_add：使用广度优先搜索（BFS）来确保所有后代都被找到
-   // fxy_add：使用广度优先搜索（BFS）来确保所有后代都被找到
    void UniNavGraph::get_descendants_info()
    {
       std::cout << "Calculating descendants info (using corrected BFS method)..." << std::endl;
       using PairType = std::pair<IdxType, int>;
 
-      // ------------------- 修改点 1 -------------------
-      // 将大小从 _num_groups 改为 _num_groups + 1
-      // 以便能安全地使用 1-based 索引 (group_id)
       std::vector<PairType> descendants_num(_num_groups + 1);
       std::vector<std::unordered_set<IdxType>> descendants_set(_num_groups + 1);
 
@@ -1206,19 +1202,15 @@ namespace ANNS
                }
             }
          }
-
-         // ------------------- 修改点 2 -------------------
-         // 使用 group_id 直接作为索引，而不是 group_id - 1
-         // 这与容器的新大小相匹配
          descendants_num[group_id] = PairType(group_id, temp_set.size());
          descendants_set[group_id] = std::move(temp_set);
       }
 
-      // 单线程写入类成员变量 (这部分无需修改)
+      // 单线程写入类成员变量
       _label_nav_graph->_lng_descendants_num = std::move(descendants_num);
       _label_nav_graph->_lng_descendants = std::move(descendants_set);
 
-      // 计算平均后代个数 (这部分无需修改)
+      // 计算平均后代个数
       double total_descendants = 0;
       for (const auto &pair : _label_nav_graph->_lng_descendants_num)
       {
@@ -2345,7 +2337,7 @@ namespace ANNS
          {
             static std::atomic<int> trie_debug_print_counter{0};
             auto get_min_super_sets_satrt_time = std::chrono::high_resolution_clock::now();
-            get_min_super_sets_debug(query_labels, entry_group_ids, true, true,
+            get_min_super_sets_debug(query_labels, entry_group_ids, false, true,
                                      trie_debug_print_counter, is_new_trie_method, is_rec_more_start, stats);
             stats.get_min_super_sets_time_ms = std::chrono::duration<double, std::milli>(
                                                    std::chrono::high_resolution_clock::now() - get_min_super_sets_satrt_time)
@@ -2363,7 +2355,7 @@ namespace ANNS
             std::vector<IdxType> base_entry_groups;
             static std::atomic<int> trie_debug_print_counter{0};
             auto get_min_super_sets_satrt_time = std::chrono::high_resolution_clock::now();
-            get_min_super_sets_debug(query_labels, base_entry_groups, true, true,
+            get_min_super_sets_debug(query_labels, base_entry_groups, false, true,
                                      trie_debug_print_counter, is_new_trie_method, is_rec_more_start, stats);
             stats.get_min_super_sets_time_ms = std::chrono::duration<double, std::milli>(
                                                    std::chrono::high_resolution_clock::now() - get_min_super_sets_satrt_time)
@@ -2755,6 +2747,7 @@ namespace ANNS
       meta_data["graph_num_edges"] = std::to_string(_graph_num_edges);
       meta_data["LNG_num_edges"] = std::to_string(_LNG_num_edges);
       meta_data["index_size(MB)"] = std::to_string(_index_size);
+      meta_data["_index_size_add_rb(MB)"] = std::to_string(_index_size_add_rb);
       meta_data["index_time(ms)"] = std::to_string(_index_time);
       meta_data["label_processing_time(ms)"] = std::to_string(_label_processing_time);
       meta_data["build_graph_time(ms)"] = std::to_string(_build_graph_time);
@@ -3016,8 +3009,23 @@ namespace ANNS
       _index_size += _trie_index.get_index_size();
       _index_size += _graph->get_index_size();
 
+      _index_size_add_rb = _index_size; // 记录不含 Roaring Bitmap 部分的索引大小
+      // fxy_add:计算为混合搜索策略预处理的 Roaring Bitmaps 的大小
+      if (!_lng_descendants_rb.empty()) {
+      for (const auto& rb : _lng_descendants_rb) {
+            _index_size_add_rb += rb.getSizeInBytes();
+      }
+      }
+      if (!_covered_sets_rb.empty()) {
+         for (const auto& rb : _covered_sets_rb) {
+               _index_size_add_rb += rb.getSizeInBytes();
+         }
+      }
+
+
       // return as MB
       _index_size /= 1024 * 1024;
+      _index_size_add_rb /= 1024 * 1024;
    }
 
    // ===================================begin：生成query task========================================

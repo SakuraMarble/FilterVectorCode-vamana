@@ -6,9 +6,9 @@ import glob
 
 # ==============================================================================
 BASE_RESULTS_DIR = '/data/fxy/FilterVector/FilterVectorResults'
-TARGET_RECALL = 0.97
-dataset_name = "celeba"
-OUTPUT_DIR = "/data/fxy/FilterVector/FilterVectorResults/merge_results/improve2/U_A/" +dataset_name
+TARGET_RECALL = 0.95
+dataset_name = "arxiv"
+OUTPUT_DIR = "/data/fxy/FilterVector/FilterVectorResults/merge_results/experiments/" +dataset_name
 # ==============================================================================
 
 def find_optimal_performance_per_query(df, recall_col, time_col, dist_calcs_col):
@@ -55,10 +55,10 @@ def process_matched_pair(acorn_csv_path, ung_csv_path):
         ung_df = pd.read_csv(ung_csv_path)
         ung_df.columns = ung_df.columns.str.strip()
         ung_optimal = find_optimal_performance_per_query(
-            ung_df, 'Recall', 'UNG_time(ms)', 'DistanceCalcs'
+            ung_df, 'Recall', 'SearchT_ms', 'DistCalcs'
         )
-        ung_final = ung_optimal[['QueryID', 'Recall', 'UNG_time(ms)', 'DistanceCalcs']].rename(columns={
-            'Recall': 'Recall_U', 'UNG_time(ms)': 'Time_U(ms)', 'DistanceCalcs': 'DistCalcs_U'
+        ung_final = ung_optimal[['QueryID', 'Recall', 'SearchT_ms', 'DistCalcs']].rename(columns={
+            'Recall': 'Recall_U', 'SearchT_ms': 'Time_U(ms)', 'DistCalcs': 'DistCalcs_U'
         }) if not ung_optimal.empty else pd.DataFrame()
 
         # --- 2. 处理 ACORN 文件 ---
@@ -131,7 +131,7 @@ def main():
         print(f"[ERROR] 找不到UNG数据集目录: {ung_base_dir}")
         return
 
-    ung_pattern = re.compile(r".*_query(\d+)_(sep(?:true|false))_th(\d+)_.*")
+    ung_pattern = re.compile(r".*_query(\d+)_(nT(?:true|false))_th(\d+)_.*")
     
     ung_exp_dirs = glob.glob(os.path.join(ung_base_dir, '*'))
     print(f"[INFO] 在UNG下找到 {len(ung_exp_dirs)} 个实验目录，开始以其为基准进行匹配...")
@@ -145,7 +145,7 @@ def main():
             print(f"\n [SKIP] 无法从UNG目录名解析参数: {ung_dir_name}")
             continue
 
-        query_val, sep_val,th_val = match.groups()
+        query_val, nT_val,th_val = match.groups()
         print(f"\n[UNG] 找到基准实验: {ung_dir_name} (query={query_val}, th={th_val})")
         
         acorn_search_pattern = os.path.join(acorn_base_dir, f"{dataset_name}_query{query_val}_*_threads{th_val}_*")
@@ -183,7 +183,7 @@ def main():
         final_merged_df = process_matched_pair(acorn_csv_path, ung_csv_path)
 
         if final_merged_df is not None and not final_merged_df.empty:
-            output_filename = f"U_A_{dataset_name}_q{query_val}_th{th_val}_{sep_val}.csv"
+            output_filename = f"U_A_{dataset_name}_q{query_val}_th{th_val}_{nT_val}.csv"
             output_path = os.path.join(OUTPUT_DIR, output_filename)
             final_merged_df.to_csv(output_path, index=False, encoding='utf-8-sig')
             print(f"  [SAVE] 结果已保存到: {output_path}")

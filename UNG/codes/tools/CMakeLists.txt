@@ -15,3 +15,6 @@ target_link_libraries(compute_groundtruth ${PROJECT_NAME} Boost::program_options
 
 # add_executable(query_generator query_generator.cpp)
 # target_link_libraries(query_generator ${PROJECT_NAME} Boost::program_options)
+
+add_executable(generate_mixed_queries generate_mixed_queries.cpp)
+target_link_libraries(generate_mixed_queries ${PROJECT_NAME} Boost::program_options ${ROARING_LIB})

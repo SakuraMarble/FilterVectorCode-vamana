@@ -1,17 +1,45 @@
 {
    "experiments": [
       {
-         "dataset": "amazing_file_1_10_10",
-         "N": 397251,
+         "dataset": "arxiv",
+         "N": 157606,
          "M": 32,
          "M_beta": 64,
          "gamma": 80,
-         "query_num": 10,
-         "threads": 32,
-         "efs_start": 200,
-         "efs_end": 2000,
-         "efs_step": 200,
-         "repeat_num": 3,
+         "query_num": 1,
+         "threads": 10,
+         "efs_start": 10,
+         "efs_end": 100,
+         "efs_step": 10,
+         "repeat_num": 2,
+         "if_bfs_filter": true
+      },
+      {
+         "dataset": "arxiv",
+         "N": 157606,
+         "M": 32,
+         "M_beta": 64,
+         "gamma": 80,
+         "query_num": 2,
+         "threads": 10,
+         "efs_start": 10,
+         "efs_end": 100,
+         "efs_step": 10,
+         "repeat_num": 2,
+         "if_bfs_filter": true
+      },
+      {
+         "dataset": "arxiv",
+         "N": 157606,
+         "M": 32,
+         "M_beta": 64,
+         "gamma": 80,
+         "query_num": 3,
+         "threads": 10,
+         "efs_start": 20,
+         "efs_end": 200,
+         "efs_step": 20,
+         "repeat_num": 2,
          "if_bfs_filter": true
       }
    ]

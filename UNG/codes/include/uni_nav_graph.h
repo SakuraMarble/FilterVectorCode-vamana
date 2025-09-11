@@ -323,7 +323,7 @@ namespace ANNS
       // statistics
       float _index_time = 0, _label_processing_time = 0, _build_graph_time = 0, _build_vector_attr_graph_time = 0, _cal_descendants_time = 0, _cal_coverage_ratio_time = 0;
       float _build_LNG_time = 0, _build_cross_edges_time = 0;
-      float _index_size;
+      float _index_size,_index_size_add_rb;
       IdxType _graph_num_edges, _LNG_num_edges;
 
       // FXY_ADD: 为 add_new_distance_oriented_edges 添加详细计时

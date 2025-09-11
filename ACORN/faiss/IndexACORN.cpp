@@ -131,7 +131,6 @@ namespace faiss
           bool verbose,
           bool preset_levels = false)
       {
-         // omp_set_num_threads(32);
          size_t d = index_acorn.d;
          ACORN &acorn = index_acorn.acorn;
          size_t ntotal = n0 + n;
@@ -372,8 +371,6 @@ namespace faiss
        bool if_bfs_filter,
        const SearchParameters *params_in) const
    {
-      // omp_set_num_threads(32); // thread=32
-      // std::cout << "enter IndexACORN::search" << std::endl;
 
       FAISS_THROW_IF_NOT(k > 0);
       FAISS_THROW_IF_NOT_MSG(

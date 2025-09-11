@@ -1,6 +1,6 @@
 #!/bin/bash
 
-IS_BUILD_AND_GT="false"
+IS_BUILD_AND_GT="true"
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd ) # Get the absolute path of the script's directory
 
@@ -37,6 +37,22 @@ cmake -DCMAKE_BUILD_TYPE=Release  "${SCRIPT_DIR}/codes/"
 make -j
 # make VERBOSE=1 -j
 cd .. || exit
+
+"$BUILD_DIR"/tools/generate_mixed_queries --mode generate \
+    --input_file /data/fxy/FilterVector/FilterVectorData/arxiv/base_2/arxiv_base_labels.txt \
+    --output_file /data/fxy/FilterVector/FilterVectorData/arxiv/query_2/arxiv_query_labels.txt \
+    --base_vectors_file /data/fxy/FilterVector/FilterVectorData/arxiv/arxiv_base.fvecs \
+    --output_vectors_file /data/fxy/FilterVector/FilterVectorData/arxiv/query_2/arxiv_query.fvecs \
+    --num_points 1000 \
+    --distribution_type zipf \
+    --truncate_to_fixed_length true \
+    --num_labels_per_query 1 \
+    --expected_num_label 7
+
+"$BUILD_DIR"/tools/generate_mixed_queries --mode analyze \
+    --input_file /data/fxy/FilterVector/FilterVectorData/arxiv/base_2/arxiv_base_labels.txt \
+    --candidate_file /data/fxy/FilterVector/FilterVectorData/arxiv/query_2/arxiv_query_labels.txt \
+    --profiled_output /data/fxy/FilterVector/FilterVectorData/arxiv/query_2/label_1_profiled.csv
 
 
 # Step3.5: Construct the output directory path with Lsearch parameters
@@ -79,7 +95,7 @@ if [ "$IS_BUILD_AND_GT" == "true" ]; then
 
     # Step5: Build index + Generate query task file
     "$BUILD_DIR"/apps/build_UNG_index \
-       --data_type float --dist_fn L2 --num_threads "$NUM_THREADS" --max_degree "$MAX_DEGREE" --Lbuild "$LBUILD" --alpha "$ALPHA" --num_cross_edges "$NUM_CROSS_EDGES"\
+       --data_type float --dist_fn L2 --num_threads 32 --max_degree "$MAX_DEGREE" --Lbuild "$LBUILD" --alpha "$ALPHA" --num_cross_edges "$NUM_CROSS_EDGES"\
        --base_bin_file "$DATA_DIR/${DATASET}_base.bin" \
        --base_label_file "$DATA_DIR/base_${NUM_QUERY_SETS}/${DATASET}_base_labels.txt" \
        --base_label_info_file "$DATA_DIR/base_${NUM_QUERY_SETS}/${DATASET}_base_labels_info.log" \

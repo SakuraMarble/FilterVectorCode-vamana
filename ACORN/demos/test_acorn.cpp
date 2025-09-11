@@ -168,8 +168,8 @@ int main(int argc, char *argv[])
       printf("efs_cnt: %d\n", efs_cnt);
    }
 
-   omp_set_num_threads(nthreads);
-   printf("Using %d threads\n", nthreads);
+   omp_set_num_threads(32);
+   printf("Using 32 threads in build index\n");
 
    BASE_DIR = base_path;
    BASE_LABEL_DIR = base_label_path;
@@ -322,6 +322,9 @@ int main(int argc, char *argv[])
       printf("====================================\n");
       hybrid_index.printStats(false);
    }
+
+   omp_set_num_threads(nthreads);
+   printf("Using %d threads in search index\n", nthreads);
 
    printf("==============================================\n");
    printf("====================Search Results====================\n");

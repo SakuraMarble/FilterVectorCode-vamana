@@ -1,10 +1,10 @@
-# 把base属性转换为按照频率编码
 import os
 from collections import Counter
 
 def recode_atomic_attributes(input_file_paths, output_dir):
     """
     读取文件列表，将逗号分隔的独立属性值作为编码单元，根据其全局频率进行编码。
+    新增功能：对每行编码后的属性组进行升序排序。
 
     Args:
         input_file_paths (list): 包含源txt文件完整路径的列表。
@@ -86,8 +86,14 @@ def recode_atomic_attributes(input_file_paths, output_dir):
     for i, (attribute, count) in enumerate(frequency_counter.most_common(10), 1):
         print(f"{i} -> ('{attribute}', {count})")
 
-    # --- 第4步: 重新遍历文件，进行编码并写入新文件 ---
+    # --- 第4步: 重新遍历文件，进行编码、排序并写入新文件 ---
     print("\n--- 开始重新编码文件 ---")
+    
+    # 定义一个排序键函数，用于对编码后的属性组进行正确的数值排序
+    def sort_key_for_groups(group_str):
+        # 将 '1,5' 这样的字符串转换为 (1, 5) 这样的整数元组，以便正确排序
+        return tuple(map(int, group_str.split(',')))
+
     for file_path in valid_file_paths:
         base_name = os.path.basename(file_path)
         name, ext = os.path.splitext(base_name)
@@ -104,13 +110,26 @@ def recode_atomic_attributes(input_file_paths, output_dir):
                 attribute_groups = line.split(' ')
                 new_encoded_groups = []
                 for group in attribute_groups:
+                    # 跳过因多个空格产生的空字符串
+                    if not group:
+                        continue
+                        
                     atomic_attributes = group.split(',')
-                    # 对每个独立的属性值进行编码
-                    encoded_atomic_attrs = [str(encoding_map[attr]) for attr in atomic_attributes]
-                    # 将编码后的值用逗号重新组合
-                    new_encoded_groups.append(','.join(encoded_atomic_attrs))
+                    
+                    # 1. 对每个独立的属性值进行编码，得到整数列表
+                    encoded_codes = [encoding_map[attr] for attr in atomic_attributes]
+                    
+                    # 2. 对组内的编码进行升序排序 (例如，将 5,1 变为 1,5)
+                    encoded_codes.sort()
+                    
+                    # 3. 将整数编码转回字符串，并用逗号重新组合
+                    new_encoded_groups.append(','.join(map(str, encoded_codes)))
                 
-                # 将重新组合好的属性组用空格连接并写入新文件
+                # 4. 对整行编码后的属性组进行升序排序
+                if new_encoded_groups:
+                    new_encoded_groups.sort(key=sort_key_for_groups)
+                
+                # 5. 将排序后的属性组用空格连接并写入新文件
                 outfile.write(' '.join(new_encoded_groups) + '\n')
         
         print(f"已生成编码文件: {output_file_path}")
@@ -119,10 +138,8 @@ def recode_atomic_attributes(input_file_paths, output_dir):
 
 if __name__ == '__main__':
     files_to_process = [
-        '/data/fxy/FilterVector/FilterVectorData/VariousTaggedImages/base_9/VariousTaggedImages_base_labels.txt',
+        '/data/fxy/FilterVector/FilterVectorData/arxiv/my_base_and_query/base_5/arxiv_base_labels.txt',
     ]
+    output_directory = '/data/fxy/FilterVector/FilterVectorData/arxiv/base_1'
 
-    output_directory = '/data/fxy/FilterVector/FilterVectorData/VariousTaggedImages/base_10'
-
-    
     recode_atomic_attributes(files_to_process, output_directory)
