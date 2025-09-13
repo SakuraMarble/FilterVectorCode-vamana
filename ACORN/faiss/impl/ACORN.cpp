@@ -137,51 +137,80 @@ namespace faiss
       // debug("end: %ln\n", end);
    }
 
-   ACORN::ACORN(int M, int gamma, std::vector<int> &metadata, int M_beta)
-       : rng(12345),
-         metadata(metadata),
-         metadata_multi(this->empty_metadata_multi)
+   // ACORN::ACORN(int M, int gamma, std::vector<int> *metadata, int M_beta)
+   //     : rng(12345),
+   //       metadata(metadata),
+   //       metadata_multi(&(this->empty_metadata_multi))
+   // {
+   //    set_default_probas(M, 1.0 / log(M), M_beta, gamma);
+   //    max_level = -1;
+   //    entry_point = -1;
+   //    efSearch = 16;
+   //    efConstruction = M * gamma; // added gamma
+   //    upper_beam = 1;
+   //    this->gamma = gamma;
+   //    // this->metadata = metadata.data();
+   //    this->M = M;
+   //    this->M_beta = M_beta;
+   //    // gamma = gamma;
+   //    offsets.push_back(0);
+   //    for (int i = 0; i < assign_probas.size(); i++)
+   //       nb_per_level.push_back(0);
+   // }
+
+   // // fxy_add
+   // ACORN::ACORN(
+   //     int M,
+   //     int gamma,
+   //     std::vector<std::vector<int>> *metadata_multi,
+   //     int M_beta)
+   //     : rng(12345),
+   //       metadata_multi(metadata_multi),
+   //       metadata(&(this->empty_metadata))
+   // {
+   //    set_default_probas(M, 1.0 / log(M), M_beta, gamma);
+   //    max_level = -1;
+   //    entry_point = -1;
+   //    efSearch = 16;
+   //    efConstruction = M * gamma; // added gamma
+   //    upper_beam = 1;
+   //    this->gamma = gamma;
+   //    // this->metadata= metadata.data();
+   //    this->M = M;
+   //    this->M_beta = M_beta;
+   //    // gamma = gamma;
+   //    offsets.push_back(0);
+   //    for (int i = 0; i < assign_probas.size(); i++)
+   //       nb_per_level.push_back(0);
+   // }
+
+   ACORN::ACORN(
+      int M,
+      int gamma,
+      const std::vector<int>* metadata,
+      const std::vector<std::vector<int>>* metadata_multi,
+      int M_beta)
+      : rng(12345),
+        metadata(metadata),
+        metadata_multi(metadata_multi)
    {
       set_default_probas(M, 1.0 / log(M), M_beta, gamma);
       max_level = -1;
       entry_point = -1;
       efSearch = 16;
-      efConstruction = M * gamma; // added gamma
+      efConstruction = M * gamma;
       upper_beam = 1;
       this->gamma = gamma;
-      // this->metadata = metadata.data();
       this->M = M;
       this->M_beta = M_beta;
-      // gamma = gamma;
       offsets.push_back(0);
-      for (int i = 0; i < assign_probas.size(); i++)
-         nb_per_level.push_back(0);
+      for (size_t i = 0; i < assign_probas.size(); i++)
+            nb_per_level.push_back(0);
    }
 
-   // fxy_add
-   ACORN::ACORN(
-       int M,
-       int gamma,
-       std::vector<std::vector<int>> &metadata_multi,
-       int M_beta)
-       : rng(12345),
-         metadata_multi(metadata_multi),
-         metadata(this->empty_metadata)
-   {
-      set_default_probas(M, 1.0 / log(M), M_beta, gamma);
-      max_level = -1;
-      entry_point = -1;
-      efSearch = 16;
-      efConstruction = M * gamma; // added gamma
-      upper_beam = 1;
-      this->gamma = gamma;
-      // this->metadata= metadata.data();
-      this->M = M;
-      this->M_beta = M_beta;
-      // gamma = gamma;
-      offsets.push_back(0);
-      for (int i = 0; i < assign_probas.size(); i++)
-         nb_per_level.push_back(0);
+   
+   void ACORN::set_metadata_multi(const std::vector<std::vector<int>>* data) {
+      this->metadata_multi = data;
    }
 
    int ACORN::random_level()
@@ -408,8 +437,8 @@ namespace faiss
       {
          if (levels[i] > level)
          {
-            if (((op == EQUAL) && (metadata[i] == filter)) ||
-                (op == OR && ((metadata[i] & filter) != 0)))
+            if (((op == EQUAL) && ((*metadata)[i] == filter)) ||
+                (op == OR && (((*metadata)[i] & filter) != 0)))
             {
                // if (metadata[i] == filter) {
                n_node++;
@@ -422,9 +451,9 @@ namespace faiss
                {
                   if (neighbors[j] < 0) // mod
                      break;
-                  if (((op == EQUAL) && (metadata[neighbors[j]] == filter)) ||
+                  if (((op == EQUAL) && ((*metadata)[neighbors[j]] == filter)) ||
                       (op == OR &&
-                       ((metadata[neighbors[j]] & filter) != 0)))
+                       (((*metadata)[neighbors[j]] & filter) != 0)))
                   {
                      // if (neighbors[j].second == filter) {
                      printf("%d(%d), ",
@@ -789,7 +818,7 @@ namespace faiss
             // storage_idx_t neigh = hnsw.neighbors[i];
             // auto [neigh, metadata] = hnsw.neighbors[i]; // mod
             auto neigh = hnsw.neighbors[i];
-            auto metadata = hnsw.metadata_multi[neigh];
+            //auto metadata = hnsw.metadata_multi[neigh];
             resultSet.emplace(qdis.symmetric_dis(src, neigh), neigh);
          }
 
@@ -800,14 +829,31 @@ namespace faiss
 
          if (level == 0)
          {
+            // shrink_neighbor_list(
+            //     qdis,
+            //     resultSet,
+            //     end - begin,
+            //     hnsw.gamma,
+            //     src,
+            //     (*hnsw.metadata_multi)[src],
+            //     hnsw);
+
+            // FIX: Check which metadata pointer is valid before dereferencing.
+            std::vector<int> src_attributes;
+            if (hnsw.metadata_multi) {
+               src_attributes = (*hnsw.metadata_multi)[src];
+            } else if (hnsw.metadata) {
+               src_attributes.push_back((*hnsw.metadata)[src]);
+            }
+
             shrink_neighbor_list(
-                qdis,
-                resultSet,
-                end - begin,
-                hnsw.gamma,
-                src,
-                hnsw.metadata_multi[src],
-                hnsw);
+               qdis,
+               resultSet,
+               end - begin,
+               hnsw.gamma,
+               src,
+               src_attributes,
+               hnsw);
          }
 
          // ...and back
@@ -893,7 +939,7 @@ namespace faiss
                // auto [nodeId, metadata] = hnsw.neighbors[i]; // storage_idx_t,
                // int
                auto nodeId = hnsw.neighbors[i];
-               auto metadata = hnsw.metadata[nodeId];
+               //auto metadata = hnsw.metadata[nodeId]; //20250912 build error
                // storage_idx_t nodeId = hnsw.neighbors[i];
                if (nodeId < 0)
                   break;
@@ -980,7 +1026,7 @@ namespace faiss
             for (size_t i = begin; i < end; i++)
             {
                auto v = hnsw.neighbors[i];
-               auto metadata = hnsw.metadata[v];
+               //auto metadata = hnsw.metadata[v];
                if (v < 0)
                {
                   break;
@@ -1186,7 +1232,7 @@ namespace faiss
              M,
              gamma,
              pt_id,
-             this->metadata_multi[pt_id],
+             (*this->metadata_multi)[pt_id],
              *this);
          // printf("shrunk");
       }
@@ -1290,7 +1336,7 @@ namespace faiss
       }
    }
 
-   /**************************************************************
+    /**************************************************************
     * Searching
     **************************************************************/
 

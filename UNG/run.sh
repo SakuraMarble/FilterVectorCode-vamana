@@ -38,40 +38,41 @@ make -j
 # make VERBOSE=1 -j
 cd .. || exit
 
-"$BUILD_DIR"/tools/generate_mixed_queries --mode generate \
-    --input_file /data/fxy/FilterVector/FilterVectorData/arxiv/base_2/arxiv_base_labels.txt \
-    --output_file /data/fxy/FilterVector/FilterVectorData/arxiv/query_2/arxiv_query_labels.txt \
-    --base_vectors_file /data/fxy/FilterVector/FilterVectorData/arxiv/arxiv_base.fvecs \
-    --output_vectors_file /data/fxy/FilterVector/FilterVectorData/arxiv/query_2/arxiv_query.fvecs \
-    --num_points 1000 \
-    --distribution_type zipf \
-    --truncate_to_fixed_length true \
-    --num_labels_per_query 1 \
-    --expected_num_label 7
+# "$BUILD_DIR"/tools/generate_mixed_queries --mode generate \
+#     --input_file /data/fxy/FilterVector/FilterVectorData/arxiv/base_4/arxiv_base_labels.txt \
+#     --output_file /data/fxy/FilterVector/FilterVectorData/arxiv/query_4/arxiv_query_labels.txt \
+#     --base_vectors_file /data/fxy/FilterVector/FilterVectorData/arxiv/arxiv_base.fvecs \
+#     --output_vectors_file /data/fxy/FilterVector/FilterVectorData/arxiv/query_4/arxiv_query.fvecs \
+#     --num_points 1000 \
+#     --K 20 \
+#     --distribution_type multi_normial \
+#     --truncate_to_fixed_length true \
+#     --num_labels_per_query 1 \
+#     --expected_num_label 7
 
-"$BUILD_DIR"/tools/generate_mixed_queries --mode analyze \
-    --input_file /data/fxy/FilterVector/FilterVectorData/arxiv/base_2/arxiv_base_labels.txt \
-    --candidate_file /data/fxy/FilterVector/FilterVectorData/arxiv/query_2/arxiv_query_labels.txt \
-    --profiled_output /data/fxy/FilterVector/FilterVectorData/arxiv/query_2/label_1_profiled.csv
+# "$BUILD_DIR"/tools/generate_mixed_queries --mode analyze \
+#     --input_file /data/fxy/FilterVector/FilterVectorData/arxiv/base_4/arxiv_base_labels.txt \
+#     --candidate_file /data/fxy/FilterVector/FilterVectorData/arxiv/query_4/arxiv_query_labels.txt \
+#     --profiled_output /data/fxy/FilterVector/FilterVectorData/arxiv/query_4/label_1_profiled.csv
 
 
 # Step3.5: Construct the output directory path with Lsearch parameters
 if [[ "$UNG_AND_ACORN" == "false" ]]; then
    if [[ "$IS_NEW_TRIE_METHOD" == "false" ]]; then
       if [[ "$IS_UNG_MORE_ENTRY" == "false" ]]; then
-         OUTPUT_DIR="${OUTPUT_DIR}/UNG/${DATASET}/${DATASET}_query${NUM_QUERY_SETS}_nT${IS_NEW_TRIE_METHOD}_th${NUM_THREADS}_M${MAX_DEGREE}_LB${LBUILD}_alpha${ALPHA}_C${NUM_CROSS_EDGES}_EP${NUM_ENTRY_POINTS}_Ls${LSEARCH_START}_Le${LSEARCH_END}_Lp${LSEARCH_STEP}_REPEATs${NUM_REPEATS}"
+         OUTPUT_DIR="${OUTPUT_DIR}/UNG/${DATASET}/${DATASET}_query${NUM_QUERY_SETS}_nT${IS_NEW_TRIE_METHOD}_th${NUM_THREADS}_k${K}_M${MAX_DEGREE}_LB${LBUILD}_alpha${ALPHA}_C${NUM_CROSS_EDGES}_EP${NUM_ENTRY_POINTS}_Ls${LSEARCH_START}_Le${LSEARCH_END}_Lp${LSEARCH_STEP}_REPEATs${NUM_REPEATS}"
       else
-         OUTPUT_DIR="${OUTPUT_DIR}/UNG_MEP/${DATASET}/${DATASET}_query${NUM_QUERY_SETS}_nT${IS_NEW_TRIE_METHOD}_mep${IS_UNG_MORE_ENTRY}_th${NUM_THREADS}_M${MAX_DEGREE}_LB${LBUILD}_alpha${ALPHA}_C${NUM_CROSS_EDGES}_EP${NUM_ENTRY_POINTS}_Ls${LSEARCH_START}_Le${LSEARCH_END}_Lp${LSEARCH_STEP}_REPEATs${NUM_REPEATS}"
+         OUTPUT_DIR="${OUTPUT_DIR}/UNG_MEP/${DATASET}/${DATASET}_query${NUM_QUERY_SETS}_nT${IS_NEW_TRIE_METHOD}_mep${IS_UNG_MORE_ENTRY}_th${NUM_THREADS}_k${K}_M${MAX_DEGREE}_LB${LBUILD}_alpha${ALPHA}_C${NUM_CROSS_EDGES}_EP${NUM_ENTRY_POINTS}_Ls${LSEARCH_START}_Le${LSEARCH_END}_Lp${LSEARCH_STEP}_REPEATs${NUM_REPEATS}"
       fi
    else 
       if [[ "$IS_UNG_MORE_ENTRY" == "false" ]]; then
-         OUTPUT_DIR="${OUTPUT_DIR}/UNG/${DATASET}/${DATASET}_query${NUM_QUERY_SETS}_nT${IS_NEW_TRIE_METHOD}_rms${IS_REC_MORE_START}_th${NUM_THREADS}_M${MAX_DEGREE}_LB${LBUILD}_alpha${ALPHA}_C${NUM_CROSS_EDGES}_EP${NUM_ENTRY_POINTS}_Ls${LSEARCH_START}_Le${LSEARCH_END}_Lp${LSEARCH_STEP}_REPEATs${NUM_REPEATS}"
+         OUTPUT_DIR="${OUTPUT_DIR}/UNG/${DATASET}/${DATASET}_query${NUM_QUERY_SETS}_nT${IS_NEW_TRIE_METHOD}_rms${IS_REC_MORE_START}_th${NUM_THREADS}_k${K}_M${MAX_DEGREE}_LB${LBUILD}_alpha${ALPHA}_C${NUM_CROSS_EDGES}_EP${NUM_ENTRY_POINTS}_Ls${LSEARCH_START}_Le${LSEARCH_END}_Lp${LSEARCH_STEP}_REPEATs${NUM_REPEATS}"
       else
-         OUTPUT_DIR="${OUTPUT_DIR}/UNG_MEP/${DATASET}/${DATASET}_query${NUM_QUERY_SETS}_nT${IS_NEW_TRIE_METHOD}_rms${IS_REC_MORE_START}_mep${IS_UNG_MORE_ENTRY}_th${NUM_THREADS}_M${MAX_DEGREE}_LB${LBUILD}_alpha${ALPHA}_C${NUM_CROSS_EDGES}_EP${NUM_ENTRY_POINTS}_Ls${LSEARCH_START}_Le${LSEARCH_END}_Lp${LSEARCH_STEP}_REPEATs${NUM_REPEATS}"
+         OUTPUT_DIR="${OUTPUT_DIR}/UNG_MEP/${DATASET}/${DATASET}_query${NUM_QUERY_SETS}_nT${IS_NEW_TRIE_METHOD}_rms${IS_REC_MORE_START}_mep${IS_UNG_MORE_ENTRY}_th${NUM_THREADS}_k${K}_M${MAX_DEGREE}_LB${LBUILD}_alpha${ALPHA}_C${NUM_CROSS_EDGES}_EP${NUM_ENTRY_POINTS}_Ls${LSEARCH_START}_Le${LSEARCH_END}_Lp${LSEARCH_STEP}_REPEATs${NUM_REPEATS}"
       fi
    fi
 elif [[ "$UNG_AND_ACORN" == "true" ]]; then
-    OUTPUT_DIR="${OUTPUT_DIR}/UNG+ACORN/${DATASET}/${DATASET}_query${NUM_QUERY_SETS}_nT${IS_NEW_TRIE_METHOD}_rms${IS_REC_MORE_START}_th${NUM_THREADS}_${NEW_EDGE_POLICY}_aefs${EFS}_R${R_IN_ADD_NEW_EDGE}_W${W_in_add_new_edge}_M${M_IN_ADD_NEW_EDGE}_l${LAYER_DEPTH_RETIO}_q${QUERY_VECTOR_RATIO}_r${ROOT_COVERAGE_THRESHOLD}_M${MAX_DEGREE}_LB${LBUILD}_alpha${ALPHA}_C${NUM_CROSS_EDGES}_EP${NUM_ENTRY_POINTS}_Ls${LSEARCH_START}_Le${LSEARCH_END}_Lp${LSEARCH_STEP}_REPEATs${NUM_REPEATS}"
+    OUTPUT_DIR="${OUTPUT_DIR}/UNG+ACORN/${DATASET}/${DATASET}_query${NUM_QUERY_SETS}_nT${IS_NEW_TRIE_METHOD}_rms${IS_REC_MORE_START}_th${NUM_THREADS}_k${K}_${NEW_EDGE_POLICY}_aefs${EFS}_R${R_IN_ADD_NEW_EDGE}_W${W_in_add_new_edge}_M${M_IN_ADD_NEW_EDGE}_l${LAYER_DEPTH_RETIO}_q${QUERY_VECTOR_RATIO}_r${ROOT_COVERAGE_THRESHOLD}_M${MAX_DEGREE}_LB${LBUILD}_alpha${ALPHA}_C${NUM_CROSS_EDGES}_EP${NUM_ENTRY_POINTS}_Ls${LSEARCH_START}_Le${LSEARCH_END}_Lp${LSEARCH_STEP}_REPEATs${NUM_REPEATS}"
     ACORN_IN_UNG_OUTPUT_DIR="$OUTPUT_DIR/acorn_in_ung_output"
     mkdir -p "$ACORN_IN_UNG_OUTPUT_DIR"
 else

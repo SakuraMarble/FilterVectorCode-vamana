@@ -279,7 +279,6 @@ namespace faiss
             omp_destroy_lock(&locks[i]);
          }
       }
-
    } // namespace
 
    /**************************************************************
@@ -294,7 +293,7 @@ namespace faiss
        int M_beta,
        MetricType metric)
        : Index(d, metric),
-         acorn(M, gamma, metadata, M_beta),
+         acorn(M, gamma, &metadata, nullptr, M_beta),
          own_fields(false),
          storage(nullptr)
    /* reconstruct_from_neighbors(nullptr)*/ {}
@@ -306,7 +305,7 @@ namespace faiss
        std::vector<int> &metadata,
        int M_beta)
        : Index(storage->d, storage->metric_type),
-         acorn(M, gamma, metadata, M_beta),
+         acorn(M, gamma, &metadata, nullptr, M_beta),
          own_fields(false),
          storage(storage)
    /* reconstruct_from_neighbors(nullptr) */ {}
@@ -319,7 +318,7 @@ namespace faiss
        int M_beta,
        MetricType metric)
        : Index(d, metric),
-         acorn(M, gamma, metadata_multi, M_beta),
+         acorn(M, gamma, nullptr, &metadata_multi, M_beta),
          own_fields(false),
          storage(nullptr)
    /* reconstruct_from_neighbors(nullptr)*/ {}
@@ -331,13 +330,16 @@ namespace faiss
        std::vector<std::vector<int>> &metadata_multi,
        int M_beta)
        : Index(storage->d, storage->metric_type),
-         acorn(M,
-               gamma,
-               metadata_multi,
-               M_beta), // TOOD acorn needs to keep metadata now
+         acorn(M, gamma, nullptr, &metadata_multi, M_beta), // TOOD acorn needs to keep metadata now
          own_fields(false),
          storage(storage)
    /* reconstruct_from_neighbors(nullptr) */ {}
+
+   void IndexACORN::set_metadata(std::vector<std::vector<int>>& metadata)
+   {
+      // 调用 ACORN 内部的 setter，并传递 metadata 的地址
+      this->acorn.set_metadata_multi(&metadata);
+   }
 
    IndexACORN::~IndexACORN()
    {

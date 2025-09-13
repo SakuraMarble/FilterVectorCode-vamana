@@ -4,783 +4,524 @@
 #include <cstring>
 #include <iostream>
 #include <random>
-
+#include <sys/stat.h>
 #include <sys/time.h>
+#include <vector>
+#include <string>
+#include <numeric>
+#include <algorithm>
+#include <fstream>
+#include <sstream>
+#include <set>
+#include <thread>
 
 #include "../faiss/Index.h"
 #include "../faiss/IndexACORN.h"
 #include "../faiss/IndexFlat.h"
-#include "../faiss/IndexHNSW.h"
-#include "../faiss/MetricType.h"
 #include "../faiss/impl/ACORN.h"
-#include "../faiss/impl/HNSW.h"
 #include "../faiss/index_io.h"
+#include "../faiss/impl/platform_macros.h"
+#include "utils.cpp" 
 
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
+// 辅助函数：获取文件大小（字节）
+long get_file_size(const std::string& filename) {
+    struct stat stat_buf;
+    int rc = stat(filename.c_str(), &stat_buf);
+    return rc == 0 ? stat_buf.st_size : -1;
+}
 
-// added these
-#include <arpa/inet.h>
-#include <assert.h> /* assert */
-#include <faiss/Index.h>
-#include <faiss/impl/platform_macros.h>
-#include <math.h>
-#include <nlohmann/json.hpp>
-#include <pthread.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/resource.h>
-#include <sys/time.h>
-#include <unistd.h>
-#include <cmath> // for std::mean and std::stdev
-#include <fstream>
-#include <iosfwd>
-#include <numeric> // for std::accumulate
-#include <set>
-#include <sstream> // for ostringstream
-#include <thread>
-#include "utils.cpp"
-
-struct QueryResult
-{
-   int query_id;
-   double acorn_time;
-   double acorn_qps;
-   float acorn_recall;
-   size_t acorn_n3;
-   double acorn_1_time;
-   double acorn_1_qps;
-   float acorn_1_recall;
-   size_t acorn_1_n3;
-   double filter_time;
+// 存储单次查询的结果
+struct QueryResult {
+    int query_id;
+    double acorn_time_ms;
+    double acorn_qps;
+    float acorn_recall;
+    size_t acorn_n3;
+    double acorn_1_time_ms;
+    double acorn_1_qps;
+    float acorn_1_recall;
+    size_t acorn_1_n3;
+    double filter_time_ms;
 };
 
-int main(int argc, char *argv[])
-{
-   // unsigned int nthreads = std::thread::hardware_concurrency();
-   std::cout
-       << "====================\nSTART: running TEST_ACORN for hnsw, sift data --"
-       << std::endl;
-   double t0 = elapsed();
+// 存储多次 repeat 聚合后的平均结果
+struct AggregatedResult {
+    double total_acorn_time_s = 0.0;
+    float total_acorn_recall = 0.0;
+    size_t total_acorn_n3 = 0;
+    
+    double total_acorn_1_time_s = 0.0;
+    float total_acorn_1_recall = 0.0;
+    size_t total_acorn_1_n3 = 0;
+    
+    double total_filter_time_s = 0.0;
+};
 
-   int efc = 40;    // default is 40
-   int efs = 16;    //  default is 16
-   int k = 10;      // search parameter
-   size_t d = 1152; // dimension of the vectors to index - will be overwritten
-                    // by the dimension of the dataset
-   int M;           // HSNW param M TODO change M back
-   int M_beta;      // param for compression
-   // float attr_sel = 0.001;
-   // int gamma = (int) 1 / attr_sel;
-   int gamma;
-   int n_centroids;
-   // int filter = 0;
-   std::string dataset; // must be sift1B or sift1M or tripclick
-   int test_partitions = 0;
-   int step = 10; // 2
 
-   std::string assignment_type = "rand";
-   int alpha = 0;
+int main(int argc, char* argv[]) {
+    std::cout << "====================\nSTART: ACORN Test Suite --" << std::endl;
+    double t0 = elapsed();
 
-   srand(0); // seed for random number generator
-   int num_trials = 60;
-   int repeat_num = 0;
+    // --- 参数定义 ---
+    size_t d = 0; 
+    int M, M_beta, gamma, k = 10;
+    std::string dataset;
+    size_t N = 0;
+    int nthreads, repeat_num = 0;
+    std::string base_path, base_label_path, query_path, csv_dir, avg_csv_dir, dis_output_path;
+    std::vector<int> efs_list;
+    bool if_bfs_filter = true;
+    std::string mode, index_path_acorn, index_path_acorn1;
 
-   size_t N = 0; // N will be how many we truncate nb from sift1M to
-   int generate_dist_output, nthreads;
-   std::string BASE_DIR, BASE_LABEL_DIR, ATTR_DATA_DIR, MY_DIS_DIR, MY_DIS_SORT_DIR;
-   std::string base_path, base_label_path, query_path, csv_path, avg_csv_path, dis_output_path;
-   double acorn_build_time = 0.0, acorn_1_build_time = 0.0;
-   std::vector<int> efs_list;
-   int efs_cnt = 0;
-   bool if_bfs_filter = true; // true:ACORN原始的
+    // --- 参数解析 ---
+    {
+        if (argc < 20) {
+            fprintf(stderr, "Usage: %s <mode> <N> <gamma> <dataset> <M> <M_beta> <base_path> <base_label_path> <query_path> <csv_dir> <avg_csv_dir> <dis_output_path> <nthreads> <repeat_num> <if_bfs_filter> <efs_list> <index_path_acorn> <index_path_acorn1><k> \n", argv[0]);
+            fprintf(stderr, "       <mode> must be 'build' or 'search'\n");
+            exit(1);
+        }
+        mode = argv[1];
+        if (mode != "build" && mode != "search") {
+            fprintf(stderr, "Invalid mode: %s. Must be 'build' or 'search'.\n", mode.c_str());
+            exit(1);
+        }
+        N = strtoul(argv[2], NULL, 10);
+        gamma = atoi(argv[3]);
+        dataset = argv[4];
+        M = atoi(argv[5]);
+        M_beta = atoi(argv[6]);
+        base_path = argv[7];
+        base_label_path = argv[8];
+        query_path = argv[9];
+        csv_dir = argv[10];     
+        avg_csv_dir = argv[11]; 
+        dis_output_path = argv[12];
+        nthreads = atoi(argv[13]);
+        repeat_num = atoi(argv[14]);
+        if_bfs_filter = atoi(argv[15]);
+        char* efs_list_str = argv[16];
+        index_path_acorn = argv[17];
+        index_path_acorn1 = argv[18];
+        k = atoi(argv[19]);
 
-   int opt;
-   { // parse arguments
+        printf("Running in '%s' mode\n", mode.c_str());
+        printf("DEBUG: N=%zu, gamma=%d, M=%d, M_beta=%d, threads=%d, repeat=%d\n", N, gamma, M, M_beta, nthreads, repeat_num);
 
-      N = strtoul(argv[1], NULL, 10);
-      printf("N: %ld\n", N);
+        char* token = strtok(efs_list_str, ",");
+        while (token != NULL) {
+            efs_list.push_back(atoi(token));
+            token = strtok(NULL, ",");
+        }
+        std::sort(efs_list.begin(), efs_list.end());
+    }
+    
+    // --- 加载元数据 ---
+    std::vector<std::vector<int>> metadata = load_ab_muti(dataset, gamma, "rand", N, base_label_path);
+    metadata.resize(N);
+    assert(N == metadata.size());
+    for (auto& inner_vector : metadata) {
+        std::sort(inner_vector.begin(), inner_vector.end());
+    }
+    printf("[%.3f s] Loaded metadata, %ld vectors found\n", elapsed() - t0, metadata.size());
 
-      gamma = atoi(argv[2]);
-      printf("gamma: %d\n", gamma);
-
-      dataset = argv[3];
-      printf("dataset: %s\n", dataset.c_str());
-      if (dataset != "sift1M" && dataset != "sift1M_test" &&
-          dataset != "sift1B" && dataset != "tripclick" &&
-          dataset != "paper" && dataset != "paper_rand2m" &&
-          dataset != "words" && dataset != "MTG" && dataset != "arxiv" && dataset != "captcha" && dataset != "TimeTravel" && dataset != "russian" && dataset != "bookimg" && dataset != "app_reviews" && dataset != "amazing_file" && dataset != "celeba" && dataset != "celeba_10" && dataset != "VariousTaggedImages") // TODO
-      {
-         printf("got dataset: %s\n", dataset.c_str());
-         fprintf(stderr,
-                 "Invalid <dataset>; must be a value in [sift1M, sift1B]\n");
-         exit(1);
-      }
-
-      M = atoi(argv[4]);
-      printf("M: %d\n", M);
-
-      M_beta = atoi(argv[5]);
-      printf("M_beta: %d\n", M_beta);
-
-      base_path = argv[6];
-      printf("base_path: %s\n", base_path.c_str());
-
-      base_label_path = argv[7];
-      printf("base_label_path: %s\n", base_label_path.c_str());
-
-      query_path = argv[8];
-      printf("query_path: %s\n", query_path.c_str());
-
-      csv_path = argv[9];
-      printf("csv_path: %s\n", csv_path.c_str());
-
-      avg_csv_path = argv[10];
-      printf("avg_csv_path: %s\n", avg_csv_path.c_str());
-
-      dis_output_path = argv[11];
-      printf("dis_output_path: %s\n", dis_output_path.c_str());
-
-      nthreads = atoi(argv[12]);
-      printf("nthreads: %d\n", nthreads);
-
-      repeat_num = atoi(argv[13]);
-      printf("repeat_num: %d\n", repeat_num);
-
-      if_bfs_filter = atoi(argv[14]);
-      printf("if_bfs_filter: %d\n", if_bfs_filter);
-
-      char *efs_list_str = argv[15];
-      printf("Raw efs_list string: %s\n", efs_list_str);
-      char *token = strtok(efs_list_str, ",");
-      while (token != NULL)
-      {
-         efs_list.push_back(atoi(token));
-         token = strtok(NULL, ",");
-      }
-      printf("Parsed efs_list: ");
-      for (int val : efs_list)
-         printf("%d ", val);
-      printf("\n");
-      efs_cnt = efs_list.size();
-      printf("efs_cnt: %d\n", efs_cnt);
-   }
-
-   omp_set_num_threads(32);
-   printf("Using 32 threads in build index\n");
-
-   BASE_DIR = base_path;
-   BASE_LABEL_DIR = base_label_path;
-   ATTR_DATA_DIR = query_path;
-   std::string last_value = query_path.substr(query_path.find_last_of('_') + 1);
-   MY_DIS_DIR = dis_output_path + "/" + dataset + "_query_" + last_value + "/my_dis";
-   MY_DIS_SORT_DIR = dis_output_path + "/" + dataset + "_query_" + last_value + "/my_dis_sort";
-
-   // load metadata
-   n_centroids = gamma;
-   std::vector<std::vector<int>> metadata = load_ab_muti(
-       dataset, gamma, assignment_type, N, BASE_LABEL_DIR); // TODO:改属性数据集名称
-   metadata.resize(N);
-   assert(N == metadata.size());
-   for (auto &inner_vector : metadata)
-   {
-      std::sort(inner_vector.begin(), inner_vector.end());
-   }
-   printf("[%.3f s] Loaded metadata, %ld attr's found\n",
-          elapsed() - t0,
-          metadata.size());
-
-   size_t nq;
-   float *xq;
-   std::vector<std::vector<int>> aq;
-   { // load query vectors and attributes
-      printf("[%.3f s] Loading query vectors and attributes\n",
-             elapsed() - t0);
-
-      size_t d2;
-      // xq = fvecs_read("sift1M/sift_query.fvecs", &d2, &nq);
-      bool is_base = 0;
-      // load_data(dataset, is_base, &d2, &nq, xq);
-      // std::string filename =get_file_name(dataset, is_base, BASE_DIR); // TODO:添加数据集名称
-      std::string filename = query_path + "/" + dataset + "_query.fvecs";
-      xq = fvecs_read(filename.c_str(), &d2, &nq);
-      assert(d == d2 ||
-             !"query does not have same dimension as expected 128");
-      if (d != d2)
-      {
-         d = d2;
-      }
-
-      std::cout << "query vecs data loaded, with dim: " << d2 << ", nq=" << nq
-                << std::endl;
-      printf("[%.3f s] Loaded query vectors from %s\n",
-             elapsed() - t0,
-             filename.c_str());
-      aq = load_aq_multi(
-          dataset, n_centroids, alpha, N, ATTR_DATA_DIR); // TODO:添加数据集名称
-      for (auto &inner_vector : aq)
-      {
-         std::sort(inner_vector.begin(), inner_vector.end());
-      }
-      std::cout << "aq.size():" << aq.size() << std::endl;
-      printf("[%.3f s] Loaded %ld %s queries\n",
-             elapsed() - t0,
-             nq,
-             dataset.c_str());
-   }
-
-   // create normal (base) and hybrid index
-   printf("[%.3f s] Index Params -- d: %ld, M: %d, N: %ld, gamma: %d\n",
-          elapsed() - t0,
-          d,
-          M,
-          N,
-          gamma);
-
-   std::vector<std::vector<std::vector<QueryResult>>> all_query_results(repeat_num, std::vector<std::vector<QueryResult>>(efs_cnt, std::vector<QueryResult>(nq)));
-   for (int repeat = 0; repeat < repeat_num; repeat++)
-      for (int efs_id = 0; efs_id < efs_cnt; efs_id++)
-         for (int i = 0; i < nq; i++)
-            all_query_results[repeat][efs_id][i].query_id = i;
-
-   std::vector<std::vector<std::vector<QueryResult>>> avg_query_results(repeat_num, std::vector<std::vector<QueryResult>>(efs_cnt, std::vector<QueryResult>(1)));
-   for (int repeat = 0; repeat < repeat_num; repeat++)
-      for (int efs_id = 0; efs_id < efs_cnt; efs_id++)
-         avg_query_results[repeat][efs_id][0].query_id = 0;
-
-   //  // base HNSW index
-   //  faiss::IndexHNSWFlat base_index(d, M, 1); // gamma = 1
-   //  base_index.hnsw.efConstruction = efc;     // default is 40  in HNSW.capp
-   //  base_index.hnsw.efSearch = efs;           // default is 16 in HNSW.capp
-
-   // ACORN-gamma
-   faiss::IndexACORNFlat hybrid_index(d, M, gamma, metadata, M_beta);
-   // hybrid_index.acorn.efSearch = efs; // default is 16 HybridHNSW.capp
-   debug("ACORN index created%s\n", "");
-
-   // ACORN-1
-   faiss::IndexACORNFlat hybrid_index_gamma1(d, M, 1, metadata, M * 2);
-   // hybrid_index_gamma1.acorn.efSearch = efs; // default is 16 HybridHNSW.capp
-
-   { // populating the database
-      std::cout << "====================Vectors====================\n"
-                << std::endl;
-
-      printf("[%.3f s] Loading database\n", elapsed() - t0);
+    // ==================== BUILD 模式 ====================
+    if (mode == "build") {
+      omp_set_num_threads(32);
+      printf("Using 32 threads to build index\n");
+      std::cout<<"Building ACORN index with parameters: " 
+               << "N=" << N << ", gamma=" << gamma 
+               << ", M=" << M << ", M_beta=" << M_beta 
+               << ", dataset=" << dataset << std::endl;
 
       size_t nb, d2;
-      bool is_base = 1;
-      // std::string filename = get_file_name(dataset, is_base, BASE_DIR); // TODO
-      std::string filename = BASE_DIR + "/" + dataset + "_base.fvecs";
-      float *xb = fvecs_read(filename.c_str(), &d2, &nb);
-      assert(d == d2 || !"dataset does not dim 128 as expected");
-      printf("[%.3f s] Loaded base vectors from file: %s\n",
-             elapsed() - t0,
-             filename.c_str());
+      float* xb = nullptr;
+      {
+          printf("[%.3f s] Loading database for building...\n", elapsed() - t0);
+          std::string filename = base_path + "/" + dataset + "_base.fvecs";
+          xb = fvecs_read(filename.c_str(), &d2, &nb);
+          d = d2; 
+          printf("[%.3f s] Base data loaded, dim: %zu, nb: %zu\n", elapsed() - t0, d, nb);
+          if (N > nb) {
+              fprintf(stderr, "Error: N=%zu is larger than database size nb=%zu\n", N, nb);
+              exit(1);
+          }
+      }
 
-      std::cout << "data loaded, with dim: " << d2 << ", nb=" << nb
-                << std::endl;
+      faiss::IndexACORNFlat hybrid_index(d, M, gamma, metadata, M_beta);
+      faiss::IndexACORNFlat hybrid_index_gamma1(d, M, 1, metadata, M * 2);
 
-      printf("[%.3f s] Indexing database, size %ld*%ld from max %ld\n",
-             elapsed() - t0,
-             N,
-             d2,
-             nb);
+      std::cout<<"Index parameters: " 
+               << "d=" << d << ", M=" << M 
+               << ", gamma=" << gamma << ", M_beta=" << M_beta 
+               << std::endl;
 
-      // index->add(nb, xb);
-
-      printf("[%.3f s] Adding the vectors to the index\n", elapsed() - t0);
-
-      //   base_index.add(N, xb);
-      //   printf("[%.3f s] Vectors added to base index \n", elapsed() - t0);
-      //   std::cout << "Base index vectors added: " << nb << std::endl;
-      double t_acorn_0 = elapsed();
+      // 构建 ACORN
+      printf("[%.3f s] Adding %zu vectors to ACORN index...\n", elapsed() - t0, N);
+      double t_start_acorn = elapsed();
       hybrid_index.add(N, xb);
-      double t_acorn_1 = elapsed();
-      printf("[%.3f s] Vectors added to hybrid index \n", elapsed() - t0);
-      std::cout << "Hybrid index vectors added" << nb << std::endl;
-      acorn_build_time = t_acorn_1 - t_acorn_0;
-      std::cout << "========ACORN index add time: " << acorn_build_time << std::endl;
-      //  printf("SKIPPED creating ACORN-gamma\n");
-      double t_acorn1_0 = elapsed();
+      double acorn_build_time_s = elapsed() - t_start_acorn;
+      printf("[%.3f s] ACORN build time: %.3f s\n", elapsed() - t0, acorn_build_time_s);
+      
+      std::cout<<"ACORN index built. Now building ACORN-1 index with gamma=1 and M_beta=" << M * 2 << std::endl;
+
+      // 构建 ACORN-1
+      printf("[%.3f s] Adding %zu vectors to ACORN-1 index...\n", elapsed() - t0, N);
+      double t_start_acorn1 = elapsed();
       hybrid_index_gamma1.add(N, xb);
-      double t_acorn1_1 = elapsed();
-      printf("[%.3f s] Vectors added to hybrid index with gamma=1 \n",
-             elapsed() - t0);
-      std::cout << "Hybrid index with gamma=1 vectors added" << nb
-                << std::endl;
-      acorn_1_build_time = t_acorn1_1 - t_acorn1_0;
-      std::cout << "========ACORN-1 index add time: " << acorn_1_build_time << std::endl;
+      double acorn_1_build_time_s = elapsed() - t_start_acorn1;
+      printf("[%.3f s] ACORN-1 build time: %.3f s\n", elapsed() - t0, acorn_1_build_time_s);
 
       delete[] xb;
-   }
-   { // print out stats
-      printf("====================================\n");
-      printf("============ ACORN INDEX =============\n");
-      printf("====================================\n");
-      hybrid_index.printStats(false);
-   }
 
-   omp_set_num_threads(nthreads);
-   printf("Using %d threads in search index\n", nthreads);
+      // 保存索引
+      printf("[%.3f s] Saving ACORN index to %s\n", elapsed() - t0, index_path_acorn.c_str());
+      faiss::write_index(&hybrid_index, index_path_acorn.c_str());
+      
+      printf("[%.3f s] Saving ACORN-1 index to %s\n", elapsed() - t0, index_path_acorn1.c_str());
+      faiss::write_index(&hybrid_index_gamma1, index_path_acorn1.c_str());
 
-   printf("==============================================\n");
-   printf("====================Search Results====================\n");
-   printf("==============================================\n");
-   double t1 = elapsed();
+      // --- ACORN 索引大小计算 ---
+      long acorn_total_size_bytes = get_file_size(index_path_acorn);
+      // 计算理论向量大小 (N * d * 4 bytes)
+      long acorn_vectors_size_bytes = (long)N * d * sizeof(float);
+      // 计算纯索引结构大小
+      long acorn_index_only_size_bytes = acorn_total_size_bytes - acorn_vectors_size_bytes;
 
-   //===================ACORN-gamma=========================
-   { // searching the hybrid database
-      printf("==================== ACORN INDEX ====================\n");
-      printf("[%.3f s] Searching the %d nearest neighbors "
-             "of %ld vectors in the index, efsearch %d\n",
+      // 保存元数据文件
+      std::ofstream meta_file(index_path_acorn + ".meta");
+      meta_file << "build_time_s:" << acorn_build_time_s << std::endl;
+      meta_file << "total_size_bytes:" << acorn_total_size_bytes << std::endl;
+      meta_file << "index_only_size_bytes:" << acorn_index_only_size_bytes << std::endl; // 新增行
+      meta_file.close();
+      
+      printf("[%.3f s] ACORN index saved. Total size: %.2f MB. Vectors part: %.2f MB. Index-only part: %.2f MB.\n", 
+             elapsed() - t0, 
+             (double)acorn_total_size_bytes / (1024.0 * 1024.0),
+             (double)acorn_vectors_size_bytes / (1024.0 * 1024.0),
+             (double)acorn_index_only_size_bytes / (1024.0 * 1024.0));
+
+      // --- ACORN-1 索引大小计算 ---
+      long acorn_1_total_size_bytes = get_file_size(index_path_acorn1);
+      long acorn_1_vectors_size_bytes = (long)N * d * sizeof(float);
+      long acorn_1_index_only_size_bytes = acorn_1_total_size_bytes - acorn_1_vectors_size_bytes;
+      
+      // 保存元数据文件
+      std::ofstream meta_file1(index_path_acorn1 + ".meta");
+      meta_file1 << "build_time_s:" << acorn_1_build_time_s << std::endl;
+      meta_file1 << "total_size_bytes:" << acorn_1_total_size_bytes << std::endl;
+      meta_file1 << "index_only_size_bytes:" << acorn_1_index_only_size_bytes << std::endl; // 新增行
+      meta_file1.close();
+
+      printf("[%.3f s] ACORN-1 index saved. Total size: %.2f MB. Vectors part: %.2f MB. Index-only part: %.2f MB.\n",
              elapsed() - t0,
-             k,
-             nq,
-             hybrid_index.acorn.efSearch);
+             (double)acorn_1_total_size_bytes / (1024.0 * 1024.0),
+             (double)acorn_1_vectors_size_bytes / (1024.0 * 1024.0),
+             (double)acorn_1_index_only_size_bytes / (1024.0 * 1024.0));
 
-      std::vector<faiss::idx_t> nns2(k * nq);
-      std::vector<float> dis2(k * nq);
-      std::cout << "aq.size():" << aq.size() << std::endl;
-      std::cout << "nq:" << nq << std::endl;
-      std::cout << "metadata.size():" << metadata.size() << std::endl;
+      printf("[%.3f s] Build finished successfully.\n", elapsed() - t0);
+      return 0;
+   }
+    // ==================== SEARCH 模式 ====================
+   else if (mode == "search") {
+        omp_set_num_threads(nthreads);
+        printf("Using %d threads for search\n", nthreads);
+        std::cout<<"Searching ACORN index with parameters: " 
+                 << "N=" << N << ", gamma=" << gamma 
+                 << ", M=" << M << ", M_beta=" << M_beta 
+                 << ", dataset=" << dataset 
+                 <<", k= "<< k << std::endl;
 
-      double t_filter_0 = elapsed();
-      std::vector<char> filter_ids_map(nq * N);
-      for (int xq = 0; xq < nq; xq++)
-      {
-         for (int xb = 0; xb < N; xb++)
+        // --- 加载构建阶段的元数据 (build time, index size) ---
+        double acorn_build_time_s = 0.0, acorn_1_build_time_s = 0.0;
+        long acorn_index_size_bytes = 0, acorn_1_index_size_bytes = 0;
+        
+        std::ifstream meta_file(index_path_acorn + ".meta");
+        std::string line;
+        if (meta_file.is_open()) {
+            while(std::getline(meta_file, line)) {
+                std::stringstream ss(line);
+                std::string key;
+                std::getline(ss, key, ':');
+                if (key == "build_time_s") ss >> acorn_build_time_s;
+                if (key == "index_size_bytes") ss >> acorn_index_size_bytes;
+            }
+            meta_file.close();
+        } else {
+            printf("Warning: Could not open meta file for ACORN index: %s.meta\n", index_path_acorn.c_str());
+        }
+
+        std::ifstream meta_file1(index_path_acorn1 + ".meta");
+        if (meta_file1.is_open()) {
+            while(std::getline(meta_file1, line)) {
+                std::stringstream ss(line);
+                std::string key;
+                std::getline(ss, key, ':');
+                if (key == "build_time_s") ss >> acorn_1_build_time_s;
+                if (key == "index_size_bytes") ss >> acorn_1_index_size_bytes;
+            }
+            meta_file1.close();
+        } else {
+             printf("Warning: Could not open meta file for ACORN-1 index: %s.meta\n", index_path_acorn1.c_str());
+        }
+
+        // --- 加载索引 ---
+        faiss::IndexACORNFlat* hybrid_index = nullptr;
+        faiss::IndexACORNFlat* hybrid_index_gamma1 = nullptr;
+
+        printf("[%.3f s] Loading ACORN index from: %s\n", elapsed() - t0, index_path_acorn.c_str());
+        hybrid_index = dynamic_cast<faiss::IndexACORNFlat*>(faiss::read_index(index_path_acorn.c_str()));
+        if (!hybrid_index) { fprintf(stderr, "Error: Failed to load index from %s.\n", index_path_acorn.c_str()); exit(1); }
+        d = hybrid_index->d;
+
+        printf("[%.3f s] Loading ACORN-1 index from: %s\n", elapsed() - t0, index_path_acorn1.c_str());
+        hybrid_index_gamma1 = dynamic_cast<faiss::IndexACORNFlat*>(faiss::read_index(index_path_acorn1.c_str()));
+        if (!hybrid_index_gamma1) { fprintf(stderr, "Error: Failed to load index from %s.\n", index_path_acorn1.c_str()); exit(1); }
+
+        // 重新关联元数据
+        printf("[%.3f s] Re-associating metadata with loaded indexes...\n", elapsed() - t0);
+        hybrid_index->set_metadata(metadata);
+        hybrid_index_gamma1->set_metadata(metadata);
+        printf("[%.3f s] Indexes loaded and ready for search.\n", elapsed() - t0);
+
+        // --- 加载查询数据 ---
+        size_t nq;
+        float* xq;
+        std::vector<std::vector<int>> aq;
+        {
+            printf("[%.3f s] Loading query vectors and attributes\n", elapsed() - t0);
+            size_t d2;
+            std::string filename = query_path + "/" + dataset + "_query.fvecs";
+            xq = fvecs_read(filename.c_str(), &d2, &nq);
+            assert(d == d2 || !"Query dimension mismatch!");
+            std::string last_value = query_path.substr(query_path.find_last_of('_') + 1);
+            aq = load_aq_multi(dataset, gamma, 0, N, query_path);
+            #pragma omp parallel for
+            for (size_t i = 0; i < aq.size(); ++i) {
+                std::sort(aq[i].begin(), aq[i].end());
+            }
+            std::cout<<"Query data loaded. nq=" << nq << std::endl;
+            printf("[%.3f s] Loaded %zu queries\n", elapsed() - t0, nq);
+        }
+
+        // --- 准备结果存储 ---
+        int efs_cnt = efs_list.size();
+        std::vector<std::vector<std::vector<QueryResult>>> all_query_results(repeat_num, std::vector<std::vector<QueryResult>>(efs_cnt, std::vector<QueryResult>(nq)));
+        for (int r = 0; r < repeat_num; ++r) for (int e = 0; e < efs_cnt; ++e) for (int i = 0; i < nq; ++i) all_query_results[r][e][i].query_id = i;
+        
+        std::vector<AggregatedResult> final_avg_results(efs_cnt);
+
+        // --- 生成 Ground Truth 和 Filter Map ---
+        std::string last_value = query_path.substr(query_path.find_last_of('_') + 1);
+        std::string MY_DIS_SORT_DIR = dis_output_path + "/" + dataset + "_query_" + last_value + "/my_dis_sort";
+
+        double t_filter_0 = elapsed();
+        std::vector<char> filter_ids_map(nq * N);
+        // OMP might not be efficient here due to small inner loop, but can try
+        #pragma omp parallel for
+        for (int xq_idx = 0; xq_idx < nq; xq_idx++) {
+            for (int xb_idx = 0; xb_idx < N; xb_idx++) {
+                const auto& query_attrs = aq[xq_idx];
+                const auto& data_attrs = metadata[xb_idx];
+                bool is_subset = std::includes(data_attrs.begin(), data_attrs.end(), query_attrs.begin(), query_attrs.end());
+                filter_ids_map[xq_idx * N + xb_idx] = is_subset;
+            }
+        }
+        double filter_time_s = elapsed() - t_filter_0;
+        printf("[%.3f s] Filter map created in %.4f s\n", elapsed() - t0, filter_time_s);
+
+         // Ground Truth生成
          {
-            const auto &query_attrs = aq[xq]; // 当前查询的属性列表（有序）
-            const auto &data_attrs =
-                metadata[xb]; // 当前数据库条目的属性列表（有序）
+            // 检查基准文件是否已存在，如果不存在则生成
+            std::string ground_truth_check_file = MY_DIS_SORT_DIR + "/filter_sorted_dist_0.txt";
+            std::ifstream f(ground_truth_check_file.c_str());
 
-            bool is_subset = true;
-            size_t i = 0, j = 0;
-            const size_t query_size = query_attrs.size();
-            const size_t data_size = data_attrs.size();
+            if (!f.good()) {
+                  printf("\n[%.3f s] Ground truth not found. Generating now... (This may take a while)\n", elapsed() - t0);
 
-            while (i < query_size && j < data_size)
-            {
-               if (query_attrs[i] == data_attrs[j])
-               {
-                  i++; // 匹配成功，检查下一个查询属性
-                  j++; // 继续检查 metadata 的下一个属性
-               }
-               else if (query_attrs[i] > data_attrs[j])
-               {
-                  j++; // metadata 当前值太小，往后找更大的
-               }
-               else
-               {
-                  is_subset = false; // query_attrs[i] <
-                                     // data_attrs[j]，缺少该属性
-                  break;
-               }
-            }
+                  // 为保存文件创建目录，避免写入失败，需要创建两级目录
+                  std::string parent_dir = dis_output_path + "/" + dataset + "_query_" + last_value;
+                  mkdir(parent_dir.c_str(), 0777);
+                  mkdir(MY_DIS_SORT_DIR.c_str(), 0777);
+                  
+                  // 1. 分配内存
+                  float* all_distances = new float[nq * N];
 
-            // 如果 query_attrs 还没遍历完，说明 metadata 缺少某些属性
-            if (i < query_size)
-            {
-               is_subset = false;
-            }
+                  // 2. 调用函数计算所有距离
+                  printf("[%.3f s] Calculating all distances using hybrid_index->calculate_distances...\n", elapsed() - t0);
+                  hybrid_index->calculate_distances(nq, xq, k, all_distances, nullptr);
+                  printf("[%.3f s] All distances calculated.\n", elapsed() - t0);
 
-            filter_ids_map[xq * N + xb] = is_subset;
-         }
-      }
+                  // 3. 筛选并排序结果
+                  printf("[%.3f s] Sorting and filtering distances...\n", elapsed() - t0);
+                  auto sorted_results = get_sorted_filtered_distances(all_distances, filter_ids_map, nq, N);
+                  
+                  // 4. 保存排序后的基准文件 
+                  printf("[%.3f s] Saving sorted ground truth to %s...\n", elapsed() - t0, MY_DIS_SORT_DIR.c_str());
+                  save_sorted_filtered_distances_to_txt(sorted_results, MY_DIS_SORT_DIR, "filter_sorted_dist_");
+                  
+                  // 5. 清理内存
+                  delete[] all_distances;
+                  printf("[%.3f s] Ground truth saved.\n\n", elapsed() - t0);
 
-      //   create filter_ids_map, ie a bitmap of the ids that are in thefilter
-      //     std::vector<char> filter_ids_map(nq * N);
-      //     for (int xq = 0; xq < nq; xq++) {
-      //         for (int xb = 0; xb < N; xb++) {
-      //             filter_ids_map[xq * N + xb] = (bool)(metadata[xb] ==
-      //             aq[xq]);
-      //         }
-      //     }
-      double t_filter_1 = elapsed();
-      printf("[%.3f s] filter_ids_map created, size %ld*%ld\n",
-             elapsed() - t0,
-             nq,
-             N);
-      printf("[%.3f s] filter_ids_map creation time: %f seconds\n",
-             elapsed() - t0,
-             t_filter_1 - t_filter_0);
-      for (int repeat = 0; repeat < repeat_num; repeat++)
-      {
-         for (int efs_id = 0; efs_id < efs_cnt; efs_id++)
-         {
-            for (auto &result : all_query_results[repeat][efs_id])
-            {
-               result.filter_time = t_filter_1 - t_filter_0;
-            }
-            avg_query_results[repeat][efs_id][0].filter_time = (t_filter_1 - t_filter_0);
-         }
-      }
-      std::cout << "filter_ids_map created. " << std::endl;
-
-      for (int repeat = 0; repeat < repeat_num; repeat++)
-      {
-         for (int efs_id = 0; efs_id < efs_cnt; efs_id++)
-         {
-            std::cout << "【========================== efs =" << efs_list[efs_id] << " ==========================】\n";
-            hybrid_index.acorn.efSearch = efs_list[efs_id];
-            std::vector<double> query_times(nq);
-            std::vector<double> query_qps(nq);
-            std::vector<size_t> query_n3(nq); // 新增
-            double t1_x = elapsed();
-            hybrid_index.search(
-                nq,
-                xq,
-                k,
-                dis2.data(),
-                nns2.data(),
-                filter_ids_map.data(),
-                &query_times, // 传入时间记录
-                &query_qps,   // 传入QPS记录
-                &query_n3,    // 传入n3记录
-                if_bfs_filter);
-            double t2_x = elapsed();
-
-            printf("[%.3f s] Query results (vector ids, then distances):\n",
-                   elapsed() - t0);
-            double search_time = t2_x - t1_x;
-            double qps = nq / search_time; // 核心计算
-            printf("[%.3f s] *** ACORN: Query time: %f seconds, QPS: %.3f\n",
-                   elapsed() - t0,
-                   search_time,
-                   qps);
-            // // 打印每个查询的n3、时间和QPS
-            // for (int i = 0; i < nq; i++)
-            // {
-            //    printf("Query %ld: n3=%zu, Time=%.6f s, QPS=%.3f\n",
-            //           i, query_n3[i], query_times[i], query_qps[i]);
-            // }
-            // 打印前10个查询结果
-            // int nq_print = std::min(10, (int)nq);
-            // for (int i = 0; i < nq_print; i++)
-            // {
-            //    printf("query %2d nn's: [", i);
-            //    for (size_t attr = 0; attr < aq[i].size(); attr++)
-            //    {
-            //       printf("%d%s",
-            //              aq[i][attr],
-            //              attr < aq[i].size() - 1 ? ", " : "");
-            //    }
-            //    printf("]: ");
-            //    for (int j = 0; j < k; j++)
-            //    {
-            //       printf("%7ld [", nns2[j + i * k]);
-            //       const auto &meta_vec = metadata[nns2[j + i * k]];
-            //       for (size_t attr = 0; attr < meta_vec.size(); attr++)
-            //       {
-            //          printf("%d%s",
-            //                 meta_vec[attr],
-            //                 attr < meta_vec.size() - 1 ? ", " : "");
-            //       }
-            //       printf("] ");
-            //    }
-            //    printf("\n     dis: \t");
-            //    for (int j = 0; j < k; j++)
-            //    {
-            //       printf("%7g ", dis2[j + i * k]);
-            //    }
-            //    printf("\n");
-            // }
-
-            //==============计算recall==========================
-            double t_recall_0 = elapsed();
-            float *all_distances = new float[nq * N]; // 存储距离结果
-            std::vector<std::vector<std::pair<int, float>>> sorted_results;
-            if (repeat == 0 && efs_id == 0)
-               generate_dist_output = 1;
-            if (generate_dist_output)
-            {
-               hybrid_index.calculate_distances(
-                   nq, xq, k, all_distances, nns2.data());
-               save_distances_to_txt(nq, N, all_distances, "distances", MY_DIS_DIR);
-               sorted_results = get_sorted_filtered_distances(
-                   all_distances, filter_ids_map, nq, N);
-               save_sorted_filtered_distances_to_txt(
-                   sorted_results,
-                   std::string(MY_DIS_SORT_DIR), // 输出目录
-                   "filter_sorted_dist_"         // 文件名前缀
-               );
-            }
-            else
-            {
-               // all_distances = read_all_distances_from_txt(std::string(MY_DIS_DIR), nq, N);
-               sorted_results = read_all_sorted_filtered_distances_from_txt(
-                   std::string(MY_DIS_SORT_DIR), nq, N);
-               std::cout << "sorted_results.size():" << sorted_results.size() << std::endl;
-            }
-
-            auto recalls = compute_recall(nns2, sorted_results, nq, k);
-            float recall_sum = std::accumulate(recalls.begin(), recalls.end(), 0.0f);
-            std::cout << "recall_sum: " << recall_sum << std::endl;
-            float recall_mean = recall_sum / nq;
-            std::cout << "recall_mean: " << recall_mean << std::endl;
-            printf("ACORN: Recall: %.2f\n", recall_mean);
-            double t_recall_1 = elapsed();
-
-            for (int i = 0; i < nq; i++)
-            {
-               all_query_results[repeat][efs_id][i].acorn_time = query_times[i];
-               all_query_results[repeat][efs_id][i].acorn_qps = query_qps[i];
-               all_query_results[repeat][efs_id][i].acorn_recall = recalls[i];
-               all_query_results[repeat][efs_id][i].acorn_n3 = query_n3[i];
-            }
-            avg_query_results[repeat][efs_id][0].acorn_time = search_time;
-            avg_query_results[repeat][efs_id][0].acorn_qps = qps;
-            avg_query_results[repeat][efs_id][0].acorn_recall = recall_mean;
-
-            std::cout << "finished hybrid index examples" << std::endl;
-            { // look at stats
-               const faiss::ACORNStats &stats = faiss::acorn_stats;
-
-               std::cout << "============= ACORN QUERY PROFILING STATS ============="
-                         << std::endl;
-               printf("[%.3f s] Timing results for search of k=%d nearest neighbors of nq=%ld vectors in the index\n",
-                      elapsed() - t0,
-                      k,
-                      nq);
-               std::cout << "n1: " << stats.n1 << std::endl;
-               std::cout << "n2: " << stats.n2 << std::endl;
-               std::cout << "n3 (number distance comps at level 0): " << stats.n3
-                         << std::endl;
-               std::cout << "ndis: " << stats.ndis << std::endl;
-               std::cout << "nreorder: " << stats.nreorder << std::endl;
-               printf("average distance computations per query: %f\n",
-                      (float)stats.n3 / stats.n1);
-               avg_query_results[repeat][efs_id][0].acorn_n3 = (float)stats.n3 / stats.n1;
+            } else {
+                  printf("\n[%.3f s] Ground truth found at %s. Skipping generation.\n\n", elapsed() - t0, MY_DIS_SORT_DIR.c_str());
+                  f.close();
             }
          }
-      }
+         std::cout<<"Search will use ground truth from: " << MY_DIS_SORT_DIR << std::endl;
+
+        // --- 多次重复执行搜索 ---
+        for (int repeat = 0; repeat < repeat_num; repeat++) {
+            std::cout<<"=============== Repeat "<< repeat + 1<<"/"<< repeat_num <<" ==============="<< std::endl;
+            for (int efs_id = 0; efs_id < efs_cnt; efs_id++) {
+                int current_efs = efs_list[efs_id];
+                
+                // --- 搜索 ACORN ---
+                std::vector<faiss::idx_t> nns2(k * nq);
+                std::vector<float> dis2(k * nq);
+                std::vector<double> query_times(nq);
+                std::vector<double> query_qps(nq);
+                std::vector<size_t> query_n3(nq);
+                
+                printf("--- ACORN | efs = %d ---\n", current_efs);
+                hybrid_index->acorn.efSearch = current_efs;
+                faiss::acorn_stats.reset();
+                double t1_acorn = elapsed();
+                hybrid_index->search(nq, xq, k, dis2.data(), nns2.data(), filter_ids_map.data(), &query_times, &query_qps, &query_n3, if_bfs_filter);
+                double search_time_acorn_s = elapsed() - t1_acorn;
+                const faiss::ACORNStats& acorn_search_stats = faiss::acorn_stats;
+
+                // --- 搜索 ACORN-1 ---
+                std::vector<faiss::idx_t> nns3(k * nq);
+                std::vector<float> dis3(k * nq);
+                std::vector<double> query_times3(nq);
+                std::vector<double> query_qps3(nq);
+                std::vector<size_t> query_n33(nq);
+
+                printf("--- ACORN-1 | efs = %d ---\n", current_efs);
+                hybrid_index_gamma1->acorn.efSearch = current_efs;
+                faiss::acorn_stats.reset();
+                double t1_acorn1 = elapsed();
+                hybrid_index_gamma1->search(nq, xq, k, dis3.data(), nns3.data(), filter_ids_map.data(), &query_times3, &query_qps3, &query_n33, if_bfs_filter);
+                double search_time_acorn1_s = elapsed() - t1_acorn1;
+                const faiss::ACORNStats& acorn1_search_stats = faiss::acorn_stats;
+                
+                // --- 计算 Recall ---
+                auto sorted_results = read_all_sorted_filtered_distances_from_txt(std::string(MY_DIS_SORT_DIR), nq, N);
+                auto recalls_acorn = compute_recall(nns2, sorted_results, nq, k);
+                float recall_mean_acorn = std::accumulate(recalls_acorn.begin(), recalls_acorn.end(), 0.0f) / nq;
+                auto recalls_acorn1 = compute_recall(nns3, sorted_results, nq, k);
+                float recall_mean_acorn1 = std::accumulate(recalls_acorn1.begin(), recalls_acorn1.end(), 0.0f) / nq;
+
+                printf("  ACORN   | Time: %.4f s, QPS: %.2f, Recall: %.4f\n", search_time_acorn_s, nq / search_time_acorn_s, recall_mean_acorn);
+                printf("  ACORN-1 | Time: %.4f s, QPS: %.2f, Recall: %.4f\n", search_time_acorn1_s, nq / search_time_acorn1_s, recall_mean_acorn1);
+
+                // --- 存储单次结果 ---
+                for (int i = 0; i < nq; i++) {
+                    all_query_results[repeat][efs_id][i].acorn_time_ms = query_times[i] * 1000.0;
+                    all_query_results[repeat][efs_id][i].acorn_qps = query_qps[i];
+                    all_query_results[repeat][efs_id][i].acorn_recall = recalls_acorn[i];
+                    all_query_results[repeat][efs_id][i].acorn_n3 = query_n3[i];
+                    all_query_results[repeat][efs_id][i].acorn_1_time_ms = query_times3[i] * 1000.0;
+                    all_query_results[repeat][efs_id][i].acorn_1_qps = query_qps3[i];
+                    all_query_results[repeat][efs_id][i].acorn_1_recall = recalls_acorn1[i];
+                    all_query_results[repeat][efs_id][i].acorn_1_n3 = query_n33[i];
+                    all_query_results[repeat][efs_id][i].filter_time_ms = filter_time_s * 1000.0;
+                }
+                
+                // --- 累加结果用于最终平均 ---
+                final_avg_results[efs_id].total_acorn_time_s += search_time_acorn_s;
+                final_avg_results[efs_id].total_acorn_recall += recall_mean_acorn;
+                final_avg_results[efs_id].total_acorn_n3 += (acorn_search_stats.n1 > 0) ? ((size_t)acorn_search_stats.n3) : 0;
+                
+                final_avg_results[efs_id].total_acorn_1_time_s += search_time_acorn1_s;
+                final_avg_results[efs_id].total_acorn_1_recall += recall_mean_acorn1;
+                final_avg_results[efs_id].total_acorn_1_n3 += (acorn1_search_stats.n1 > 0) ? ((size_t)acorn1_search_stats.n3) : 0;
+                
+                final_avg_results[efs_id].total_filter_time_s += filter_time_s;
+            }
+        }
+
+        // --- 生成动态文件名 ---
+        std::string query_num_str = query_path.substr(query_path.find_last_of('_') + 1);
+        std::stringstream efs_str_stream;
+        efs_str_stream << efs_list.front() << "-" << efs_list.back();
+        if (efs_list.size() > 1) {
+             efs_str_stream << "_" << (efs_list[1] - efs_list[0]);
+        }
+
+        std::stringstream file_suffix_stream;
+        file_suffix_stream << dataset << "_query" << query_num_str
+                   << "_M" << M << "_gamma" << gamma
+                   << "_threads" << nthreads << "_repeat" << repeat_num
+                   << "_ifbfs" << if_bfs_filter << "_efs" << efs_str_stream.str()
+                   << ".csv";
+
+        std::string output_filename = file_suffix_stream.str();
+        std::string full_csv_path = csv_dir + "/" + output_filename;
+        std::string full_avg_csv_path = avg_csv_dir + "/" + "avg_" + output_filename;
+        
+        printf("\n[%.3f s] Writing detailed results to: %s\n", elapsed() - t0, full_csv_path.c_str());
+        printf("[%.3f s] Writing average results to: %s\n", elapsed() - t0, full_avg_csv_path.c_str());
+
+        // --- 写详细CSV文件 (per query) ---
+        std::ofstream csv_file(full_csv_path);
+        csv_file << "repeat,efs,QueryID,acorn_Time_ms,acorn_QPS,acorn_Recall,acorn_n3_visited,"
+                 << "acorn_build_time_ms,acorn_index_size_MB,"
+                 << "acorn_1_Time_ms,acorn_1_QPS,acorn_1_Recall,acorn_1_n3_visited,"
+                 << "acorn_1_build_time_ms,acorn_1_index_size_MB,FilterMapTime_ms\n";
+        for (int repeat = 0; repeat < repeat_num; repeat++) {
+            for (int efs_id = 0; efs_id < efs_list.size(); efs_id++) {
+                for (const auto &result : all_query_results[repeat][efs_id]) {
+                    csv_file << repeat << ","
+                             << efs_list[efs_id] << ","
+                             << result.query_id << ","
+                             << result.acorn_time_ms << "," << result.acorn_qps << ","
+                             << result.acorn_recall << "," << result.acorn_n3 << ","
+                             << acorn_build_time_s * 1000.0 << ","
+                             << (double)acorn_index_size_bytes / (1024.0 * 1024.0) << ","
+                             << result.acorn_1_time_ms << "," << result.acorn_1_qps << ","
+                             << result.acorn_1_recall << "," << result.acorn_1_n3 << ","
+                             << acorn_1_build_time_s * 1000.0 << ","
+                             << (double)acorn_1_index_size_bytes / (1024.0 * 1024.0) << ","
+                             << result.filter_time_ms << "\n";
+                }
+            }
+        }
+        csv_file.close();
+
+        // --- 写平均CSV文件 (per efs) ---
+        std::ofstream avg_csv_file(full_avg_csv_path);
+        avg_csv_file << "efs,acorn_Time_ms,acorn_QPS,acorn_Recall,acorn_n3_visited_avg,"
+                     << "acorn_build_time_ms,acorn_index_size_MB,"
+                     << "acorn_1_Time_ms,acorn_1_QPS,acorn_1_Recall,acorn_1_n3_visited_avg,"
+                     << "acorn_1_build_time_ms,acorn_1_index_size_MB,FilterMapTime_ms\n";
+        for (int efs_id = 0; efs_id < efs_list.size(); efs_id++) {
+            const auto& aggregated = final_avg_results[efs_id];
+            avg_csv_file << efs_list[efs_id] << ","
+                         << (aggregated.total_acorn_time_s * 1000.0) / repeat_num << ","
+                         << (nq * repeat_num) / aggregated.total_acorn_time_s << ","
+                         << aggregated.total_acorn_recall / repeat_num << ","
+                         << (double)aggregated.total_acorn_n3 / (nq * repeat_num) << ","
+                         << acorn_build_time_s * 1000.0 << ","
+                         << (double)acorn_index_size_bytes / (1024.0 * 1024.0) << ","
+                         << (aggregated.total_acorn_1_time_s * 1000.0) / repeat_num << ","
+                         << (nq * repeat_num) / aggregated.total_acorn_1_time_s << ","
+                         << aggregated.total_acorn_1_recall / repeat_num << ","
+                         << (double)aggregated.total_acorn_1_n3 / (nq * repeat_num) << ","
+                         << acorn_1_build_time_s * 1000.0 << ","
+                         << (double)acorn_1_index_size_bytes / (1024.0 * 1024.0) << ","
+                         << (aggregated.total_filter_time_s * 1000.0) / repeat_num << "\n";
+        }
+        avg_csv_file.close();
+
+        delete[] xq;
+        delete hybrid_index;
+        delete hybrid_index_gamma1;
+
+        printf("\n[%.3f s] -----SEARCH DONE-----\n", elapsed() - t0);
+        return 0;
    }
 
-   // ===================ACORN-1=====================================
-   { // searching the hybrid database
-      printf("==================== ACORN-1 INDEX ====================\n");
-      printf("[%.3f s] Searching the %d nearest neighbors "
-             "of %ld vectors in the index, efsearch %d\n",
-             elapsed() - t0,
-             k,
-             nq,
-             hybrid_index.acorn.efSearch);
-
-      std::vector<faiss::idx_t> nns3(k * nq);
-      std::vector<float> dis3(k * nq);
-      std::cout << "aq.size():" << aq.size() << std::endl;
-      std::cout << "nq:" << nq << std::endl;
-
-      std::vector<char> filter_ids_map3(nq * N);
-      for (int xq = 0; xq < nq; xq++)
-      {
-         for (int xb = 0; xb < N; xb++)
-         {
-            const auto &query_attrs = aq[xq]; // 当前查询的属性列表（有序）
-            const auto &data_attrs = metadata[xb];
-
-            bool is_subset = true;
-            size_t i = 0, j = 0;
-            const size_t query_size = query_attrs.size();
-            const size_t data_size = data_attrs.size();
-
-            while (i < query_size && j < data_size)
-            {
-               if (query_attrs[i] == data_attrs[j])
-               {
-                  i++; // 匹配成功，检查下一个查询属性
-                  j++; // 继续检查 metadata 的下一个属性
-               }
-               else if (query_attrs[i] > data_attrs[j])
-               {
-                  j++; // metadata 当前值太小，往后找更大的
-               }
-               else
-               {
-                  is_subset = false; // query_attrs[i] <
-                                     // data_attrs[j]，缺少该属性
-                  break;
-               }
-            }
-
-            // 如果 query_attrs 还没遍历完，说明 metadata 缺少某些属性
-            if (i < query_size)
-            {
-               is_subset = false;
-            }
-
-            filter_ids_map3[xq * N + xb] = is_subset;
-         }
-      }
-      std::cout << "filter_ids_map.size():" << filter_ids_map3.size()
-                << std::endl;
-      for (int repeat; repeat < repeat_num; repeat++)
-      {
-         for (int efs_id = 0; efs_id < efs_cnt; efs_id++)
-         {
-            std::cout << "【========================== efs =" << efs_list[efs_id] << " ==========================】";
-            hybrid_index_gamma1.acorn.efSearch = efs_list[efs_id];
-            std::vector<double> query_times3(nq);
-            std::vector<double> query_qps3(nq);
-            std::vector<size_t> query_n33(nq);
-            double t1_x = elapsed();
-            hybrid_index_gamma1.search(
-                nq,
-                xq,
-                k,
-                dis3.data(),
-                nns3.data(),
-                filter_ids_map3.data(),
-                &query_times3,
-                &query_qps3,
-                &query_n33,
-                if_bfs_filter);
-            double t2_x = elapsed();
-
-            printf("[%.3f s] Query results (vector ids, then distances):\n",
-                   elapsed() - t0);
-            double search_time = t2_x - t1_x;
-            double qps = nq / search_time; // 核心计算
-            printf("[%.3f s] *** ACORN-1: Query time: %f seconds, QPS: %.3f\n",
-                   elapsed() - t0,
-                   search_time,
-                   qps);
-            // // 打印每个查询的n3、时间和QPS
-            // for (int i = 0; i < nq; i++)
-            // {
-            //    printf("Query %ld: n3=%zu, Time=%.6f s, QPS=%.3f\n",
-            //           i, query_n33[i], query_times3[i], query_qps3[i]);
-            // }
-            // int nq_print = std::min(10, (int)nq);
-            // for (int i = 0; i < nq_print; i++)
-            // {
-            //    printf("query %2d nn's: [", i);
-            //    for (size_t attr = 0; attr < aq[i].size(); attr++)
-            //    {
-            //       printf("%d%s",
-            //              aq[i][attr],
-            //              attr < aq[i].size() - 1 ? ", " : "");
-            //    }
-            //    printf("]: ");
-            //    for (int j = 0; j < k; j++)
-            //    {
-            //       printf("%7ld [", nns3[j + i * k]);
-            //       const auto &meta_vec = metadata[nns3[j + i * k]];
-            //       for (size_t attr = 0; attr < meta_vec.size(); attr++)
-            //       {
-            //          printf("%d%s",
-            //                 meta_vec[attr],
-            //                 attr < meta_vec.size() - 1 ? ", " : "");
-            //       }
-            //       printf("] ");
-            //    }
-            //    printf("\n     dis: \t");
-            //    for (int j = 0; j < k; j++)
-            //    {
-            //       printf("%7g ", dis3[j + i * k]);
-            //    }
-            //    printf("\n");
-            // }
-
-            //==============计算recall==========================
-            auto sorted_results = read_all_sorted_filtered_distances_from_txt(
-                std::string(MY_DIS_SORT_DIR), nq, N);
-            std::cout << "sorted_results.size():" << sorted_results.size() << std::endl;
-
-            auto recalls = compute_recall(nns3, sorted_results, nq, k);
-            // recall平均值
-            float recall_sum =
-                std::accumulate(recalls.begin(), recalls.end(), 0.0f);
-            float recall_mean = recall_sum / nq;
-            printf("ACORN-1: Recall: %.2f\n", recall_mean);
-
-            for (int i = 0; i < nq; i++)
-            {
-               all_query_results[repeat][efs_id][i].acorn_1_time = query_times3[i];
-               all_query_results[repeat][efs_id][i].acorn_1_qps = query_qps3[i];
-               all_query_results[repeat][efs_id][i].acorn_1_recall = recalls[i];
-               all_query_results[repeat][efs_id][i].acorn_1_n3 = query_n33[i];
-            }
-            avg_query_results[repeat][efs_id][0].acorn_1_time = search_time;
-            avg_query_results[repeat][efs_id][0].acorn_1_qps = qps;
-            avg_query_results[repeat][efs_id][0].acorn_1_recall = recall_mean;
-
-            std::cout << "finished hybrid index examples" << std::endl;
-            { // look at stats
-               const faiss::ACORNStats &stats = faiss::acorn_stats;
-
-               std::cout << "============= ACORN-1 QUERY PROFILING STATS ============="
-                         << std::endl;
-               printf("[%.3f s] Timing results for search of k=%d nearest neighbors of nq=%ld vectors in the index\n",
-                      elapsed() - t0,
-                      k,
-                      nq);
-               std::cout << "n1: " << stats.n1 << std::endl;
-               std::cout << "n2: " << stats.n2 << std::endl;
-               std::cout << "n3 (number distance comps at level 0): " << stats.n3
-                         << std::endl;
-               std::cout << "ndis: " << stats.ndis << std::endl;
-               std::cout << "nreorder: " << stats.nreorder << std::endl;
-               printf("average distance computations per query: %f\n",
-                      (float)stats.n3 / stats.n1);
-               avg_query_results[repeat][efs_id][0].acorn_1_n3 = (float)stats.n3 / stats.n1;
-            }
-         }
-      }
-   }
-
-   std::ofstream csv_file(csv_path);
-   csv_file << "repeat,efs,QueryID,acorn_Time,acorn_QPS,acorn_Recall,acorn_n3, acorn_build_time,"
-            << "ACORN_1_Time,ACORN_1_QPS,ACORN_1_Recall,ACORN_1_n3, ACORN_1_build_time,FilterMapTime\n";
-   std::cout << "repeat_num: " << repeat_num << std::endl;
-   for (int repeat; repeat < repeat_num; repeat++)
-   {
-      for (int efs_id = 0; efs_id < efs_list.size(); efs_id++)
-      {
-         for (const auto &result : all_query_results[repeat][efs_id])
-         {
-            csv_file << repeat << ","
-                     << efs_list[efs_id] << ","
-                     << result.query_id << ","
-                     << result.acorn_time << "," << result.acorn_qps << ","
-                     << result.acorn_recall << "," << result.acorn_n3 << ","
-                     << acorn_build_time << ","
-                     << result.acorn_1_time << "," << result.acorn_1_qps << ","
-                     << result.acorn_1_recall << "," << result.acorn_1_n3 << ","
-                     << acorn_1_build_time << ","
-                     << result.filter_time << "\n";
-         }
-      }
-   }
-
-   csv_file.close();
-   std::ofstream avg_csv_file(avg_csv_path);
-   avg_csv_file << "repeat,efs,acorn_Time,acorn_QPS,acorn_Recall,acorn_n3, acorn_build_time,"
-                << "ACORN_1_Time,ACORN_1_QPS,ACORN_1_Recall,ACORN_1_n3, ACORN_1_build_time,FilterMapTime\n";
-   for (int repeat; repeat < repeat_num; repeat++)
-   {
-      for (int efs_id = 0; efs_id < efs_list.size(); efs_id++)
-      {
-
-         avg_csv_file << repeat << ","
-                      << efs_list[efs_id] << ","
-                      << avg_query_results[repeat][efs_id][0].acorn_time << ","
-                      << avg_query_results[repeat][efs_id][0].acorn_qps << ","
-                      << avg_query_results[repeat][efs_id][0].acorn_recall << ","
-                      << avg_query_results[repeat][efs_id][0].acorn_n3 << ","
-                      << acorn_build_time << ","
-                      << avg_query_results[repeat][efs_id][0].acorn_1_time << ","
-                      << avg_query_results[repeat][efs_id][0].acorn_1_qps << ","
-                      << avg_query_results[repeat][efs_id][0].acorn_1_recall << ","
-                      << avg_query_results[repeat][efs_id][0].acorn_1_n3 << ","
-                      << acorn_1_build_time << ","
-                      << avg_query_results[repeat][efs_id][0].filter_time << "\n";
-      }
-   }
-
-   avg_csv_file.close();
-   printf("[%.3f s] -----DONE-----\n", elapsed() - t0);
+   return 0; 
 }

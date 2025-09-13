@@ -160,12 +160,24 @@ int main(int argc, char **argv)
    // compute attribute bitmap
    std::vector<std::pair<std::bitset<10000001>, double>> bitmap_and_time(num_queries);
    std::vector<std::bitset<10000001>> bitmap(num_queries);
+   auto bitmap_start_time = std::chrono::high_resolution_clock::now();
 #pragma omp parallel for
    for (int id = 0; id < num_queries; id++)
    {
       bitmap_and_time[id] = index.compute_attribute_bitmap(query_storage->get_label_set(id));
       bitmap[id] = bitmap_and_time[id].first;
    }
+   auto bitmap_total_time = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - bitmap_start_time).count();
+   std::cout << "Total bitmap computation time for all queries: " << bitmap_total_time << " ms" << std::endl;
+   std::string build_time_file_path = result_path_prefix + "build_time.csv";
+   std::ofstream build_time_file(build_time_file_path, std::ios::app);// 以追加模式(std::ios::app)打开文件
+   if (build_time_file.is_open())
+   {
+      build_time_file << "cal_bitmap_time," << bitmap_total_time;
+      build_time_file.close();
+   }
+   else
+      std::cerr << "错误：无法打开文件 " << build_time_file_path << " 进行写入" << std::endl;
 
    // init query stats
    std::vector<std::vector<std::vector<ANNS::QueryStats>>> query_stats(num_repeats, std::vector<std::vector<ANNS::QueryStats>>(Lsearch_list.size(), std::vector<ANNS::QueryStats>(num_queries))); //(repeat,Lsearch,queryID)

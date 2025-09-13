@@ -124,6 +124,8 @@ namespace faiss
           int filter = -1,
           Operation op = EQUAL);
 
+      void set_metadata(std::vector<std::vector<int>>& metadata);
+
    private:
       const int debugFlag = 0;
 

@@ -479,7 +479,7 @@ int main(int argc, char** argv) {
         ("base_vectors_file", po::value<std::string>(), "[Optional] Path to the base vectors file (.fvecs format)")
         ("output_vectors_file", po::value<std::string>(), "[Optional] Output path for the generated query vectors (.fvecs format)")
         ("num_points", po::value<IdxType>(), "Number of candidate queries to generate")
-        ("K", po::value<IdxType>()->default_value(10), "Minimum number of potential results for a query to be valid")
+        ("K", po::value<IdxType>()->default_value(20), "Minimum number of potential results for a query to be valid")
         ("distribution_type", po::value<std::string>()->default_value("multi_normial"), "Distribution type: zipf, multi_normial")
         ("truncate_to_fixed_length", po::value<bool>()->default_value(true), "Use fixed-length queries. If false, query length is variable.")
         ("num_labels_per_query", po::value<IdxType>()->default_value(2), "The fixed number of labels per query (if truncate_to_fixed_length is true).")

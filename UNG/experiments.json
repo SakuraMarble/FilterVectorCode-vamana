@@ -4,6 +4,50 @@
          "dataset": "arxiv",
          "data_dir": "/data/fxy/FilterVector/FilterVectorData/arxiv",
          "output_dir": "/data/fxy/FilterVector/FilterVectorResults/",
+         "num_query_sets": 1,
+         "max_degree": 32,
+         "Lbuild": 100,
+         "alpha": 1.2,
+         "num_cross_edges": 2,
+         "num_entry_points": 16,
+         "Lsearch_start": 500,
+         "Lsearch_end": 5000,
+         "Lsearch_step": 500,
+         "num_threads": 10,
+         "K": 10,
+         "num_repeats": 3,
+         "trie_param": {
+            "is_new_trie_method": false,
+            "is_rec_more_start": false
+         },
+         "generate_query": false,
+         "generate_query_task": "hard_top_n_rare",
+         "method1_high_coverage_p": 0.3,
+         "ung_more_entry_param": {
+            "is_ung_more_entry": false
+         },
+         "ung_and_acorn_param": {
+            "ung_and_acorn": false,
+            "new_edge_policy": "acorn_and_guarantee",
+            "R_in_add_new_edge": 50,
+            "W_in_add_new_edge": 50,
+            "M_in_add_new_edge": 4,
+            "layer_depth_retio": 0.8,
+            "query_vector_ratio": 0.8,
+            "root_coverage_threshold": 0.4,
+            "acorn_in_ung": {
+               "M": 32,
+               "M_beta": 64,
+               "gamma": 80,
+               "efs": 1000,
+               "compute_recall": 1
+            }
+         }
+      },
+      {
+         "dataset": "arxiv",
+         "data_dir": "/data/fxy/FilterVector/FilterVectorData/arxiv",
+         "output_dir": "/data/fxy/FilterVector/FilterVectorResults/",
          "num_query_sets": 2,
          "max_degree": 32,
          "Lbuild": 100,
@@ -15,7 +59,227 @@
          "Lsearch_step": 500,
          "num_threads": 10,
          "K": 10,
-         "num_repeats": 2,
+         "num_repeats": 3,
+         "trie_param": {
+            "is_new_trie_method": false,
+            "is_rec_more_start": false
+         },
+         "generate_query": false,
+         "generate_query_task": "hard_top_n_rare",
+         "method1_high_coverage_p": 0.3,
+         "ung_more_entry_param": {
+            "is_ung_more_entry": false
+         },
+         "ung_and_acorn_param": {
+            "ung_and_acorn": false,
+            "new_edge_policy": "acorn_and_guarantee",
+            "R_in_add_new_edge": 50,
+            "W_in_add_new_edge": 50,
+            "M_in_add_new_edge": 4,
+            "layer_depth_retio": 0.8,
+            "query_vector_ratio": 0.8,
+            "root_coverage_threshold": 0.4,
+            "acorn_in_ung": {
+               "M": 32,
+               "M_beta": 64,
+               "gamma": 80,
+               "efs": 1000,
+               "compute_recall": 1
+            }
+         }
+      },
+      {
+         "dataset": "arxiv",
+         "data_dir": "/data/fxy/FilterVector/FilterVectorData/arxiv",
+         "output_dir": "/data/fxy/FilterVector/FilterVectorResults/",
+         "num_query_sets": 3,
+         "max_degree": 32,
+         "Lbuild": 100,
+         "alpha": 1.2,
+         "num_cross_edges": 2,
+         "num_entry_points": 16,
+         "Lsearch_start": 500,
+         "Lsearch_end": 5000,
+         "Lsearch_step": 500,
+         "num_threads": 10,
+         "K": 10,
+         "num_repeats": 3,
+         "trie_param": {
+            "is_new_trie_method": false,
+            "is_rec_more_start": false
+         },
+         "generate_query": false,
+         "generate_query_task": "hard_top_n_rare",
+         "method1_high_coverage_p": 0.3,
+         "ung_more_entry_param": {
+            "is_ung_more_entry": false
+         },
+         "ung_and_acorn_param": {
+            "ung_and_acorn": false,
+            "new_edge_policy": "acorn_and_guarantee",
+            "R_in_add_new_edge": 50,
+            "W_in_add_new_edge": 50,
+            "M_in_add_new_edge": 4,
+            "layer_depth_retio": 0.8,
+            "query_vector_ratio": 0.8,
+            "root_coverage_threshold": 0.4,
+            "acorn_in_ung": {
+               "M": 32,
+               "M_beta": 64,
+               "gamma": 80,
+               "efs": 1000,
+               "compute_recall": 1
+            }
+         }
+      },
+      {
+         "dataset": "arxiv",
+         "data_dir": "/data/fxy/FilterVector/FilterVectorData/arxiv",
+         "output_dir": "/data/fxy/FilterVector/FilterVectorResults/",
+         "num_query_sets": 2,
+         "max_degree": 32,
+         "Lbuild": 100,
+         "alpha": 1.2,
+         "num_cross_edges": 2,
+         "num_entry_points": 16,
+         "Lsearch_start": 500,
+         "Lsearch_end": 5000,
+         "Lsearch_step": 500,
+         "num_threads": 1,
+         "K": 10,
+         "num_repeats": 3,
+         "trie_param": {
+            "is_new_trie_method": false,
+            "is_rec_more_start": false
+         },
+         "generate_query": false,
+         "generate_query_task": "hard_top_n_rare",
+         "method1_high_coverage_p": 0.3,
+         "ung_more_entry_param": {
+            "is_ung_more_entry": false
+         },
+         "ung_and_acorn_param": {
+            "ung_and_acorn": false,
+            "new_edge_policy": "acorn_and_guarantee",
+            "R_in_add_new_edge": 50,
+            "W_in_add_new_edge": 50,
+            "M_in_add_new_edge": 4,
+            "layer_depth_retio": 0.8,
+            "query_vector_ratio": 0.8,
+            "root_coverage_threshold": 0.4,
+            "acorn_in_ung": {
+               "M": 32,
+               "M_beta": 64,
+               "gamma": 80,
+               "efs": 1000,
+               "compute_recall": 1
+            }
+         }
+      },
+      {
+         "dataset": "arxiv",
+         "data_dir": "/data/fxy/FilterVector/FilterVectorData/arxiv",
+         "output_dir": "/data/fxy/FilterVector/FilterVectorResults/",
+         "num_query_sets": 2,
+         "max_degree": 32,
+         "Lbuild": 100,
+         "alpha": 1.2,
+         "num_cross_edges": 2,
+         "num_entry_points": 16,
+         "Lsearch_start": 500,
+         "Lsearch_end": 5000,
+         "Lsearch_step": 500,
+         "num_threads": 80,
+         "K": 10,
+         "num_repeats": 3,
+         "trie_param": {
+            "is_new_trie_method": false,
+            "is_rec_more_start": false
+         },
+         "generate_query": false,
+         "generate_query_task": "hard_top_n_rare",
+         "method1_high_coverage_p": 0.3,
+         "ung_more_entry_param": {
+            "is_ung_more_entry": false
+         },
+         "ung_and_acorn_param": {
+            "ung_and_acorn": false,
+            "new_edge_policy": "acorn_and_guarantee",
+            "R_in_add_new_edge": 50,
+            "W_in_add_new_edge": 50,
+            "M_in_add_new_edge": 4,
+            "layer_depth_retio": 0.8,
+            "query_vector_ratio": 0.8,
+            "root_coverage_threshold": 0.4,
+            "acorn_in_ung": {
+               "M": 32,
+               "M_beta": 64,
+               "gamma": 80,
+               "efs": 1000,
+               "compute_recall": 1
+            }
+         }
+      },
+      {
+         "dataset": "arxiv",
+         "data_dir": "/data/fxy/FilterVector/FilterVectorData/arxiv",
+         "output_dir": "/data/fxy/FilterVector/FilterVectorResults/",
+         "num_query_sets": 2,
+         "max_degree": 32,
+         "Lbuild": 100,
+         "alpha": 1.2,
+         "num_cross_edges": 2,
+         "num_entry_points": 16,
+         "Lsearch_start": 500,
+         "Lsearch_end": 5000,
+         "Lsearch_step": 500,
+         "num_threads": 10,
+         "K": 5,
+         "num_repeats": 3,
+         "trie_param": {
+            "is_new_trie_method": false,
+            "is_rec_more_start": false
+         },
+         "generate_query": false,
+         "generate_query_task": "hard_top_n_rare",
+         "method1_high_coverage_p": 0.3,
+         "ung_more_entry_param": {
+            "is_ung_more_entry": false
+         },
+         "ung_and_acorn_param": {
+            "ung_and_acorn": false,
+            "new_edge_policy": "acorn_and_guarantee",
+            "R_in_add_new_edge": 50,
+            "W_in_add_new_edge": 50,
+            "M_in_add_new_edge": 4,
+            "layer_depth_retio": 0.8,
+            "query_vector_ratio": 0.8,
+            "root_coverage_threshold": 0.4,
+            "acorn_in_ung": {
+               "M": 32,
+               "M_beta": 64,
+               "gamma": 80,
+               "efs": 1000,
+               "compute_recall": 1
+            }
+         }
+      },
+      {
+         "dataset": "arxiv",
+         "data_dir": "/data/fxy/FilterVector/FilterVectorData/arxiv",
+         "output_dir": "/data/fxy/FilterVector/FilterVectorResults/",
+         "num_query_sets": 2,
+         "max_degree": 32,
+         "Lbuild": 100,
+         "alpha": 1.2,
+         "num_cross_edges": 2,
+         "num_entry_points": 16,
+         "Lsearch_start": 500,
+         "Lsearch_end": 5000,
+         "Lsearch_step": 500,
+         "num_threads": 10,
+         "K": 20,
+         "num_repeats": 3,
          "trie_param": {
             "is_new_trie_method": false,
             "is_rec_more_start": false

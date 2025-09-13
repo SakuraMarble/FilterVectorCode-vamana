@@ -181,12 +181,18 @@ namespace faiss
 
       /// only mandatory parameter: nb of neighbors
       // explicit HNSW(int M = 32);
-      explicit ACORN(int M, int gamma, std::vector<int> &metadata, int M_beta);
+      // explicit ACORN(int M, int gamma, std::vector<int> *metadata, int M_beta);
+      // explicit ACORN(
+      //     int M,
+      //     int gamma,
+      //     std::vector<std::vector<int>> *metadata_multi,
+      //     int M_beta);
       explicit ACORN(
-          int M,
-          int gamma,
-          std::vector<std::vector<int>> &metadata_multi,
-          int M_beta);
+         int M,
+         int gamma,
+         const std::vector<int>* metadata,
+         const std::vector<std::vector<int>>* metadata_multi,
+         int M_beta);
 
       /// pick a random level for a new point
       int random_level();
@@ -236,8 +242,12 @@ namespace faiss
        * ACORN HYBRID INDEX
        **************************************************************/
       /// search interface for 1 point, single thread
-      const std::vector<int> &metadata;
-      const std::vector<std::vector<int>> &metadata_multi;
+      // const std::vector<int> &metadata;
+      // const std::vector<std::vector<int>> &metadata_multi;
+      const std::vector<int>* metadata;
+      const std::vector<std::vector<int>>* metadata_multi;
+      void set_metadata_multi(const std::vector<std::vector<int>>* data);
+
       std::vector<std::string> metadata_strings;
 
       std::vector<int> empty_metadata; // 空的 std::vector<int>
