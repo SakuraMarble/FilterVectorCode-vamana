@@ -293,8 +293,12 @@ namespace ANNS
       }
       if (candidates.size() == 1)
       {
-         std::cout << "Only one candidate found. Returning it as the minimal super set." << std::endl;
          min_super_set_ids.emplace_back(candidates[0]->group_id);
+         // std::cout<<"group_id_to_label_set: "<<std::endl;
+         // for(auto label_id: _group_id_to_label_set[candidates[0]->group_id]){
+         //    std::cout<<label_id<<" ";
+         // }
+         // std::cout<<std::endl;
          return;
       }
 
@@ -340,23 +344,6 @@ namespace ANNS
       time_filtering_loop = std::chrono::duration<double, std::milli>(end_filter - start_filter).count();
 
       auto function_total_time = std::chrono::duration<double, std::milli>(end_filter - function_start_time).count();
-
-      /*// --- 4. 使用原子计数器控制打印次数 ---
-      // fetch_add(1) 会原子地将计数器加1，并返回增加前的值。所以这个条件对于前10次调用 (0到9) 会成立。
-      if (print_counter.fetch_add(1) < 10)
-      {
-// 使用 #pragma omp critical 来防止多线程输出混乱
-#pragma omp critical
-         {
-            std::cout << "--- get_min_super_sets Performance Analysis---\n"
-                      << "  - Trie查找总耗时: " << time_trie_lookup << " ms\n"
-                      << "  - 排序耗时:       " << time_sorting << " ms\n"
-                      << "  - 过滤循环耗时:   " << time_filtering_loop << " ms\n"
-                      << "Total Function Time: " << function_total_time << " ms\n"
-                      << "-----------------------------------------------------------\n"
-                      << std::endl;
-         }
-      }*/
    }
 
    // 为了方便排序，定义一个结构体来存储候选组及其评分

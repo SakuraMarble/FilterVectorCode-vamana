@@ -169,18 +169,20 @@ int main(int argc, char **argv)
    }
    auto bitmap_total_time = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - bitmap_start_time).count();
    std::cout << "Total bitmap computation time for all queries: " << bitmap_total_time << " ms" << std::endl;
-   std::string build_time_file_path = result_path_prefix + "build_time.csv";
-   std::ofstream build_time_file(build_time_file_path, std::ios::app);// 以追加模式(std::ios::app)打开文件
-   if (build_time_file.is_open())
-   {
-      build_time_file << "cal_bitmap_time," << bitmap_total_time;
-      build_time_file.close();
-   }
-   else
-      std::cerr << "错误：无法打开文件 " << build_time_file_path << " 进行写入" << std::endl;
 
    // init query stats
    std::vector<std::vector<std::vector<ANNS::QueryStats>>> query_stats(num_repeats, std::vector<std::vector<ANNS::QueryStats>>(Lsearch_list.size(), std::vector<ANNS::QueryStats>(num_queries))); //(repeat,Lsearch,queryID)
+
+   // 结构体，用于存储每一次的详细耗时
+   struct SearchTimeLog {
+      int repeat;
+      ANNS::IdxType l_search;
+      double time_ms;
+      float avg_recall;
+   };
+   std::vector<SearchTimeLog> detailed_times; // 存储所有详细耗时记录
+   std::map<ANNS::IdxType, std::vector<double>> time_per_lsearch;// 使用 map 来按 Lsearch 值分组存储每次 repeat 的耗时，方便后续计算平均值
+   std::map<ANNS::IdxType, std::vector<float>> recall_per_lsearch; // 用于存储每个 Lsearch 的 recall 值
 
    for (int repeat = 0; repeat < num_repeats; ++repeat)
    {
@@ -192,24 +194,84 @@ int main(int argc, char **argv)
       std::vector<float> all_is_global_search; // 如果需要统计全局搜索比例
 
       std::cout << "Start querying ..." << std::endl;
-      for (int LsearchId = 0; LsearchId < Lsearch_list.size(); LsearchId++) // auto Lsearch : Lsearch_list
+      for (int LsearchId = 0; LsearchId < Lsearch_list.size(); LsearchId++)
       {
+         ANNS::IdxType current_Lsearch = Lsearch_list[LsearchId];
          std::vector<float> num_cmps(num_queries);
+
+         // 1. 计时并执行搜索
          auto start_time = std::chrono::high_resolution_clock::now();
          if (!is_new_method)
          {
-            // index.search(query_storage, distance_handler, num_threads, Lsearch_list[LsearchId], num_entry_points, scenario, K, results, num_cmps, bitmap);
+             // index.search(...); 
          }
          else
-            index.search_hybrid(query_storage, distance_handler, num_threads, Lsearch_list[LsearchId],
-                                num_entry_points, scenario, K, results, num_cmps, query_stats[repeat][LsearchId], bitmap, is_ori_ung, is_new_trie_method, is_rec_more_start, is_ung_more_entry, true_query_group_ids);
+         {
+             index.search_hybrid(query_storage, distance_handler, num_threads, current_Lsearch,
+                                 num_entry_points, scenario, K, results, num_cmps, query_stats[repeat][LsearchId], bitmap, is_ori_ung, is_new_trie_method, is_rec_more_start, is_ung_more_entry, true_query_group_ids);
+         }
          auto time_cost = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
+
+         // 2. 计算每个独立查询的Recall
          for (int i = 0; i < num_queries; ++i)
-            query_stats[repeat][LsearchId][i].recall = calculate_single_query_recall(gt + i * K, results + i * K, K);
-      }
+             query_stats[repeat][LsearchId][i].recall = calculate_single_query_recall(gt + i * K, results + i * K, K);
+
+         // 3. 计算当前这一个批次 (LsearchId) 的平均Recall
+         double total_recall_for_batch = 0.0;
+         for (int i = 0; i < num_queries; ++i)
+             total_recall_for_batch += query_stats[repeat][LsearchId][i].recall;
+         float avg_recall_for_batch = (num_queries > 0) ? (static_cast<float>(total_recall_for_batch) / num_queries) : 0.0f;
+
+         // 4. 将批处理时间 和 该批次的平均Recall 存入相应的数据结构中
+         // a. 存入 detailed_times 用于生成 search_time_details.csv
+         detailed_times.push_back({repeat, current_Lsearch, time_cost, avg_recall_for_batch});
+         
+         // b. 按 Lsearch 值分组存入 map，用于后续计算总平均值，生成 search_time_summary.csv
+         time_per_lsearch[current_Lsearch].push_back(time_cost);
+         recall_per_lsearch[current_Lsearch].push_back(avg_recall_for_batch);
+
+         std::cout << "  Lsearch=" << current_Lsearch << ", time=" << time_cost << "ms" << ", avg_recall=" << avg_recall_for_batch << std::endl;
+      } 
    }
 
-   // 输出详细文件
+   // save search_time_details.csv
+   std::string details_file_path = result_path_prefix + "search_time_details.csv";
+   std::ofstream details_out(details_file_path);
+   if (details_out.is_open()) {
+      details_out << "Repeat,Lsearch,Time_ms,Avg_Recall\n"; // <-- 修改表头
+      for (const auto& log : detailed_times) {
+          details_out << log.repeat << "," << log.l_search << "," << log.time_ms << "," << log.avg_recall << "\n";
+      }
+      details_out.close();
+      std::cout << "\n详细的搜索耗时已保存到: " << details_file_path << std::endl;
+   } else {
+      std::cerr << "错误：无法打开文件 " << details_file_path << " 进行写入" << std::endl;
+   }
+
+   // save search_time_summary.csv
+   std::string summary_file_path = result_path_prefix + "search_time_summary.csv";
+   std::ofstream summary_out(summary_file_path);
+   if (summary_out.is_open()) {
+      summary_out << "Metric,Value\n";
+      summary_out << "Bitmap_Computation_Time_ms," << bitmap_total_time << "\n\n";
+      summary_out << "Lsearch,Average_Time_ms,Average_Recall\n";
+      for (auto const& [l_search, times] : time_per_lsearch) {
+          if (!times.empty()) {
+              double sum_time = std::accumulate(times.begin(), times.end(), 0.0);
+              double avg_time = sum_time / times.size();
+              const auto& recalls = recall_per_lsearch.at(l_search);
+              double sum_recall = std::accumulate(recalls.begin(), recalls.end(), 0.0f);
+              double avg_recall = sum_recall / recalls.size();
+              summary_out << l_search << "," << avg_time << ","  << avg_recall << "\n";
+          }
+      }
+      summary_out.close();
+      std::cout << "性能汇总 (Bitmap时间和平均耗时/QPS) 已保存到: " << summary_file_path << std::endl;
+   } else {
+      std::cerr << "错误：无法打开文件 " << summary_file_path << " 进行写入" << std::endl;
+   }
+
+   // save query details for every query
    std::ofstream detail_out(result_path_prefix + "query_details_repeat" + std::to_string(num_repeats) + ".csv");
    detail_out << "repeat,Lsearch,QueryID,Time_ms,MinSupersetT_ms,EntryGroupT_ms,DescMergeT_ms,CovMergeT_ms,"
               << "FlagT_ms,BitmapT_ms,SearchT_ms,DistCalcs,NumEntries,NumDescendants,TotalCoverage,QuerySize,"
@@ -255,27 +317,6 @@ int main(int argc, char **argv)
    }
 
    detail_out.close();
-   // std::cout << "- Lsearch=" << Lsearch_list[LsearchId] << ", time=" << time_cost << "ms" << std::endl;
-   // all_qpss.push_back(num_queries * 1000.0 / time_cost);
-   // all_cmps.push_back(std::accumulate(num_cmps.begin(), num_cmps.end(), 0.00f) / num_queries);
-   // all_recalls.push_back(ANNS::calculate_recall(gt, results, num_queries, K));
-   // std::ofstream out(result_path_prefix + "result_avg_repeat" + std::to_string(repeat) + ".csv");
-   // out << "L,Cmps,QPS,Recall,Time(ms),Flag_time(ms),Bitmap_time(ms),EntryPoints,LNGDescendants,entry_group_total_coverage\n";
-   // for (auto i = 0; i < Lsearch_list.size(); i++)
-   // {
-   //    out << Lsearch_list[i] << ","
-   //        << all_cmps[i] << ","
-   //        << all_qpss[i] << ","
-   //        << all_recalls[i] / 100.00 << ","
-   //        << all_time_ms[i] << ","
-   //        << all_flag_time[i] << ","
-   //        << all_bitmap_time[i] << ","
-   //        << all_entry_points[i] << ","
-   //        << all_lng_descendants[i] << ","
-   //        << all_entry_group_coverage[i] << "\n";
-   // }
-   // out.close();
-
    std::cout << "- all done" << std::endl;
    return 0;
 }

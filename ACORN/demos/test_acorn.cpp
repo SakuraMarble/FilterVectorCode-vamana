@@ -314,20 +314,34 @@ int main(int argc, char* argv[]) {
         std::string last_value = query_path.substr(query_path.find_last_of('_') + 1);
         std::string MY_DIS_SORT_DIR = dis_output_path + "/" + dataset + "_query_" + last_value + "/my_dis_sort";
 
-        double t_filter_0 = elapsed();
-        std::vector<char> filter_ids_map(nq * N);
-        // OMP might not be efficient here due to small inner loop, but can try
+         // 串行计算 Filter Map
+         double t_filter_0 = elapsed();
+         std::vector<char> filter_ids_map(nq * N);
+         for (int xq_idx = 0; xq_idx < nq; xq_idx++) {
+            for (int xb_idx = 0; xb_idx < N; xb_idx++) {
+               const auto& query_attrs = aq[xq_idx];
+               const auto& data_attrs = metadata[xb_idx];
+               bool is_subset = std::includes(data_attrs.begin(), data_attrs.end(), query_attrs.begin(), query_attrs.end());
+               filter_ids_map[xq_idx * N + xb_idx] = is_subset;
+            }
+         }
+         double filter_time_s = elapsed() - t_filter_0;
+         printf("[%.3f s] Filter map created in %.4f s\n", elapsed() - t0, filter_time_s);
+
+        // 并行计算 Filter Map
+        double t_filter_para_0 = elapsed();
+        std::vector<char> filter_ids_map_para(nq * N);
         #pragma omp parallel for
         for (int xq_idx = 0; xq_idx < nq; xq_idx++) {
             for (int xb_idx = 0; xb_idx < N; xb_idx++) {
                 const auto& query_attrs = aq[xq_idx];
                 const auto& data_attrs = metadata[xb_idx];
                 bool is_subset = std::includes(data_attrs.begin(), data_attrs.end(), query_attrs.begin(), query_attrs.end());
-                filter_ids_map[xq_idx * N + xb_idx] = is_subset;
+                filter_ids_map_para[xq_idx * N + xb_idx] = is_subset;
             }
         }
-        double filter_time_s = elapsed() - t_filter_0;
-        printf("[%.3f s] Filter map created in %.4f s\n", elapsed() - t0, filter_time_s);
+        double filter_para_time_s = elapsed() - t_filter_para_0;
+        printf("[%.3f s] Filter map created in %.4f s\n", elapsed() - t0, filter_para_time_s);
 
          // Ground Truth生成
          {
@@ -353,7 +367,7 @@ int main(int argc, char* argv[]) {
 
                   // 3. 筛选并排序结果
                   printf("[%.3f s] Sorting and filtering distances...\n", elapsed() - t0);
-                  auto sorted_results = get_sorted_filtered_distances(all_distances, filter_ids_map, nq, N);
+                  auto sorted_results = get_sorted_filtered_distances(all_distances, filter_ids_map_para, nq, N);
                   
                   // 4. 保存排序后的基准文件 
                   printf("[%.3f s] Saving sorted ground truth to %s...\n", elapsed() - t0, MY_DIS_SORT_DIR.c_str());
@@ -383,11 +397,11 @@ int main(int argc, char* argv[]) {
                 std::vector<double> query_qps(nq);
                 std::vector<size_t> query_n3(nq);
                 
-                printf("--- ACORN | efs = %d ---\n", current_efs);
+                std::cout<<"--- ACORN | efs = "<< current_efs <<" ---"<< std::endl;
                 hybrid_index->acorn.efSearch = current_efs;
                 faiss::acorn_stats.reset();
                 double t1_acorn = elapsed();
-                hybrid_index->search(nq, xq, k, dis2.data(), nns2.data(), filter_ids_map.data(), &query_times, &query_qps, &query_n3, if_bfs_filter);
+                hybrid_index->search(nq, xq, k, dis2.data(), nns2.data(), filter_ids_map_para.data(), &query_times, &query_qps, &query_n3, if_bfs_filter);
                 double search_time_acorn_s = elapsed() - t1_acorn;
                 const faiss::ACORNStats& acorn_search_stats = faiss::acorn_stats;
 
@@ -402,7 +416,7 @@ int main(int argc, char* argv[]) {
                 hybrid_index_gamma1->acorn.efSearch = current_efs;
                 faiss::acorn_stats.reset();
                 double t1_acorn1 = elapsed();
-                hybrid_index_gamma1->search(nq, xq, k, dis3.data(), nns3.data(), filter_ids_map.data(), &query_times3, &query_qps3, &query_n33, if_bfs_filter);
+                hybrid_index_gamma1->search(nq, xq, k, dis3.data(), nns3.data(), filter_ids_map_para.data(), &query_times3, &query_qps3, &query_n33, if_bfs_filter);
                 double search_time_acorn1_s = elapsed() - t1_acorn1;
                 const faiss::ACORNStats& acorn1_search_stats = faiss::acorn_stats;
                 
@@ -413,8 +427,8 @@ int main(int argc, char* argv[]) {
                 auto recalls_acorn1 = compute_recall(nns3, sorted_results, nq, k);
                 float recall_mean_acorn1 = std::accumulate(recalls_acorn1.begin(), recalls_acorn1.end(), 0.0f) / nq;
 
-                printf("  ACORN   | Time: %.4f s, QPS: %.2f, Recall: %.4f\n", search_time_acorn_s, nq / search_time_acorn_s, recall_mean_acorn);
-                printf("  ACORN-1 | Time: %.4f s, QPS: %.2f, Recall: %.4f\n", search_time_acorn1_s, nq / search_time_acorn1_s, recall_mean_acorn1);
+                std::cout<< "  ACORN   | Time: "<< search_time_acorn_s <<" s, QPS: "<< nq / search_time_acorn_s <<", Recall: "<< recall_mean_acorn << std::endl;
+                std::cout<< "  ACORN-1 | Time: "<< search_time_acorn1_s <<" s, QPS: "<< nq / search_time_acorn1_s <<", Recall: "<< recall_mean_acorn1 << std::endl;
 
                 // --- 存储单次结果 ---
                 for (int i = 0; i < nq; i++) {
@@ -426,7 +440,7 @@ int main(int argc, char* argv[]) {
                     all_query_results[repeat][efs_id][i].acorn_1_qps = query_qps3[i];
                     all_query_results[repeat][efs_id][i].acorn_1_recall = recalls_acorn1[i];
                     all_query_results[repeat][efs_id][i].acorn_1_n3 = query_n33[i];
-                    all_query_results[repeat][efs_id][i].filter_time_ms = filter_time_s * 1000.0;
+                    //all_query_results[repeat][efs_id][i].filter_time_ms = filter_time_s * 1000.0;
                 }
                 
                 // --- 累加结果用于最终平均 ---
@@ -438,9 +452,16 @@ int main(int argc, char* argv[]) {
                 final_avg_results[efs_id].total_acorn_1_recall += recall_mean_acorn1;
                 final_avg_results[efs_id].total_acorn_1_n3 += (acorn1_search_stats.n1 > 0) ? ((size_t)acorn1_search_stats.n3) : 0;
                 
-                final_avg_results[efs_id].total_filter_time_s += filter_time_s;
+                //final_avg_results[efs_id].total_filter_time_s += filter_time_s;
+
+               // // 检查召回率是否都已达到 1.0
+               // if (recall_mean_acorn >= 0.99f && recall_mean_acorn1 >= 0.99f) {
+               //    std::cout << "--- Recall@ " << k << " for both ACORN and ACORN-1 reached 0.99 at efs=" 
+               //             << current_efs << ". Skipping larger efs values for this repeat. ---" << std::endl;
+               //    break;
+               // }
             }
-        }
+         }
 
         // --- 生成动态文件名 ---
         std::string query_num_str = query_path.substr(query_path.find_last_of('_') + 1);
@@ -469,7 +490,7 @@ int main(int argc, char* argv[]) {
         csv_file << "repeat,efs,QueryID,acorn_Time_ms,acorn_QPS,acorn_Recall,acorn_n3_visited,"
                  << "acorn_build_time_ms,acorn_index_size_MB,"
                  << "acorn_1_Time_ms,acorn_1_QPS,acorn_1_Recall,acorn_1_n3_visited,"
-                 << "acorn_1_build_time_ms,acorn_1_index_size_MB,FilterMapTime_ms\n";
+                 << "acorn_1_build_time_ms,acorn_1_index_size_MB\n";
         for (int repeat = 0; repeat < repeat_num; repeat++) {
             for (int efs_id = 0; efs_id < efs_list.size(); efs_id++) {
                 for (const auto &result : all_query_results[repeat][efs_id]) {
@@ -483,8 +504,7 @@ int main(int argc, char* argv[]) {
                              << result.acorn_1_time_ms << "," << result.acorn_1_qps << ","
                              << result.acorn_1_recall << "," << result.acorn_1_n3 << ","
                              << acorn_1_build_time_s * 1000.0 << ","
-                             << (double)acorn_1_index_size_bytes / (1024.0 * 1024.0) << ","
-                             << result.filter_time_ms << "\n";
+                             << (double)acorn_1_index_size_bytes / (1024.0 * 1024.0) << "\n";
                 }
             }
         }
@@ -495,7 +515,7 @@ int main(int argc, char* argv[]) {
         avg_csv_file << "efs,acorn_Time_ms,acorn_QPS,acorn_Recall,acorn_n3_visited_avg,"
                      << "acorn_build_time_ms,acorn_index_size_MB,"
                      << "acorn_1_Time_ms,acorn_1_QPS,acorn_1_Recall,acorn_1_n3_visited_avg,"
-                     << "acorn_1_build_time_ms,acorn_1_index_size_MB,FilterMapTime_ms\n";
+                     << "acorn_1_build_time_ms,acorn_1_index_size_MB,FilterMapTime_ms,FilterMapTime_para_ms\n";
         for (int efs_id = 0; efs_id < efs_list.size(); efs_id++) {
             const auto& aggregated = final_avg_results[efs_id];
             avg_csv_file << efs_list[efs_id] << ","
@@ -511,7 +531,8 @@ int main(int argc, char* argv[]) {
                          << (double)aggregated.total_acorn_1_n3 / (nq * repeat_num) << ","
                          << acorn_1_build_time_s * 1000.0 << ","
                          << (double)acorn_1_index_size_bytes / (1024.0 * 1024.0) << ","
-                         << (aggregated.total_filter_time_s * 1000.0) / repeat_num << "\n";
+                         << filter_time_s * 1000.0 << ","
+                         << filter_para_time_s * 1000.0 << "\n";
         }
         avg_csv_file.close();
 

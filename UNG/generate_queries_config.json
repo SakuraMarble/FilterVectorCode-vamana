@@ -1,0 +1,66 @@
+{
+   "query_tasks": [
+     {
+       "enabled": true,
+       "task_name": "multi_normial_l=5",
+       "mode": "generate",
+       "dataset": "celeba",
+       "data_dir": "/data/fxy/FilterVector/FilterVectorData/celeba",
+       "build_dir": "/data/fxy/FilterVector/build",
+       "num_query_sets": 1,
+       "overwrite": true,
+ 
+       "generation_params": {
+         "num_points": 3000,
+         "K": 20,
+         "distribution_type": "multi_normial",
+         "truncate_to_fixed_length": true,
+         "num_labels_per_query": 5,
+         "expected_num_label": 5
+       },
+
+       "sub_base_params":{
+         "num_points":3000,
+         "query_length":5,
+         "K": 20,
+         "min_children":1,
+         "max_coverage":10000000
+       },
+
+       "analysis_params": {
+         "analyze": true
+       }
+     },
+     {
+      "enabled": true,
+      "task_name": "sub_base_l=5",
+      "mode": "sub_base",
+      "dataset": "celeba",
+      "data_dir": "/data/fxy/FilterVector/FilterVectorData/celeba",
+      "build_dir": "/data/fxy/FilterVector/build",
+      "num_query_sets": 1,
+      "overwrite": true,
+
+      "generation_params": {
+        "num_points": 3000,
+        "K": 20,
+        "distribution_type": "multi_normial",
+        "truncate_to_fixed_length": true,
+        "num_labels_per_query": 5,
+        "expected_num_label": 5
+      },
+
+      "sub_base_params":{
+        "num_points":3000,
+        "query_length":5,
+        "K": 20,
+        "min_children":1,
+        "max_coverage":10000000
+      },
+
+      "analysis_params": {
+        "analyze": true
+      }
+    }
+   ]
+ }

@@ -38,22 +38,22 @@ make -j
 # make VERBOSE=1 -j
 cd .. || exit
 
-# "$BUILD_DIR"/tools/generate_mixed_queries --mode generate \
-#     --input_file /data/fxy/FilterVector/FilterVectorData/arxiv/base_4/arxiv_base_labels.txt \
-#     --output_file /data/fxy/FilterVector/FilterVectorData/arxiv/query_4/arxiv_query_labels.txt \
-#     --base_vectors_file /data/fxy/FilterVector/FilterVectorData/arxiv/arxiv_base.fvecs \
-#     --output_vectors_file /data/fxy/FilterVector/FilterVectorData/arxiv/query_4/arxiv_query.fvecs \
-#     --num_points 1000 \
-#     --K 20 \
-#     --distribution_type multi_normial \
-#     --truncate_to_fixed_length true \
-#     --num_labels_per_query 1 \
-#     --expected_num_label 7
+"$BUILD_DIR"/tools/generate_mixed_queries --mode generate \
+    --input_file /data/fxy/FilterVector/FilterVectorData/arxiv/base_4/arxiv_base_labels.txt \
+    --output_file /data/fxy/FilterVector/FilterVectorData/arxiv/query_4/arxiv_query_labels.txt \
+    --base_vectors_file /data/fxy/FilterVector/FilterVectorData/arxiv/arxiv_base.fvecs \
+    --output_vectors_file /data/fxy/FilterVector/FilterVectorData/arxiv/query_4/arxiv_query.fvecs \
+    --num_points 1000 \
+    --K 20 \
+    --distribution_type multi_normial \
+    --truncate_to_fixed_length true \
+    --num_labels_per_query 1 \
+    --expected_num_label 7
 
-# "$BUILD_DIR"/tools/generate_mixed_queries --mode analyze \
-#     --input_file /data/fxy/FilterVector/FilterVectorData/arxiv/base_4/arxiv_base_labels.txt \
-#     --candidate_file /data/fxy/FilterVector/FilterVectorData/arxiv/query_4/arxiv_query_labels.txt \
-#     --profiled_output /data/fxy/FilterVector/FilterVectorData/arxiv/query_4/label_1_profiled.csv
+"$BUILD_DIR"/tools/generate_mixed_queries --mode analyze \
+    --input_file /data/fxy/FilterVector/FilterVectorData/arxiv/base_4/arxiv_base_labels.txt \
+    --candidate_file /data/fxy/FilterVector/FilterVectorData/arxiv/query_4/arxiv_query_labels.txt \
+    --profiled_output /data/fxy/FilterVector/FilterVectorData/arxiv/query_4/label_1_profiled.csv
 
 
 # Step3.5: Construct the output directory path with Lsearch parameters

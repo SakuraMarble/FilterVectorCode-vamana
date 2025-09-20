@@ -106,7 +106,7 @@ int main(int argc, char **argv)
       // query file
       desc.add_options()("generate_query", po::value<bool>(&generate_query)->required(),
                          "Whether to generate query file");
-      desc.add_options()("generate_query_task", po::value<std::string>(&generate_query_task)->required(),
+      desc.add_options()("generate_query_task", po::value<std::string>(&generate_query_task)->default_value("no"),
                          "generate_query_task");
       desc.add_options()("query_file_path", po::value<std::string>(&query_file_path)->default_value("my_words_query"),
                          "Query label file");
