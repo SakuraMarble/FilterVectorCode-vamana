@@ -10,7 +10,9 @@
      "ung_index_handle": "Q{query_num}_M32_LB100_alpha1.2_C6_EP16",
      "ung_gt_handle": "Q{query_num}_K{K}",
      "ung_search_handle_false": "Ls1000-Le40000-Lp1000_K{K}_nTfalse_rmsfalse_th{threads}",
-     "ung_search_handle_true": "Ls1000-Le40000-Lp1000_K{K}_nTtrue_rmstrue_th{threads}"
+     "ung_search_handle_true": "Ls1000-Le40000-Lp1000_K{K}_nTtrue_rmstrue_th{threads}",
+
+     "attribute_coverage_file": "/data/fxy/FilterVector/FilterVectorData/{dataset}/query_{query_num}/attribute_coverage_merged.csv"
    },
  
    "experiments": [
@@ -26,7 +28,8 @@
             "selection_mode": "center_select", 
             "center_percentile": 0.75,
             "query_sizes_to_process": [2, 5, 8],
-            "num_queries_per_size": 1000
+            "num_queries_per_size": 1000,
+            "generate_selectivity_plot": true
           }
        },
       {
@@ -41,7 +44,8 @@
          "selection_mode": "center_select", 
          "center_percentile": 1.0,
          "query_sizes_to_process": [2, 5, 8],
-         "num_queries_per_size": 1000
+         "num_queries_per_size": 1000,
+         "generate_selectivity_plot": true
        }
      },
      {
@@ -56,7 +60,8 @@
          "selection_mode": "center_select", 
          "center_percentile": 0.75,
          "query_sizes_to_process": [2, 5, 8],
-         "num_queries_per_size": 1000
+         "num_queries_per_size": 1000,
+         "generate_selectivity_plot": true
        }
     },
       {
@@ -71,7 +76,8 @@
          "selection_mode": "center_select", 
          "center_percentile": 1.0,
          "query_sizes_to_process": [2, 5, 8],
-         "num_queries_per_size": 1000
+         "num_queries_per_size": 1000,
+         "generate_selectivity_plot": true
        }
       },
       {
@@ -86,7 +92,8 @@
             "selection_mode": "center_select", 
             "center_percentile": 0.75,
             "query_sizes_to_process": [2, 5, 8],
-            "num_queries_per_size": 1000
+            "num_queries_per_size": 1000,
+            "generate_selectivity_plot": true
           }
       },
       {
@@ -101,7 +108,8 @@
          "selection_mode": "center_select", 
          "center_percentile": 1.0,
          "query_sizes_to_process": [2, 5, 8],
-         "num_queries_per_size": 1000
+         "num_queries_per_size": 1000,
+         "generate_selectivity_plot": true
        }
       }
    ],

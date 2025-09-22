@@ -8,7 +8,7 @@ def run_selection(paths, params):
     """
     根据定义好的策略（direct, acorn-slow, acorn-fast, percentile, center_select）挑选查询。
     """
-    print("\n[步骤 2/4] 开始根据策略挑选查询任务...")
+    print("\n[步骤 2/5] 开始根据策略挑选查询任务...")
 
     # 从字典加载配置
     full_results_csv = paths['output_csv_path']

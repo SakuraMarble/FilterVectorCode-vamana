@@ -27,7 +27,7 @@ def generate_overall_plot(paths):
    Generates the main QPS-Recall chart by aggregating data across all selected queries.
    It also saves a detailed performance analysis CSV and text file.
    """
-   print("\n[步骤 3/4] 开始生成总体的QPS-Recall图...")
+   print("\n[步骤 3/5] 开始生成总体的QPS-Recall图...")
 
    # Load file paths from the dictionary
    selected_queries_file = paths['selected_queries_file']
@@ -36,7 +36,7 @@ def generate_overall_plot(paths):
    ung_nt_false_details_file = paths['ung_nt_false_details_file']
    ung_nt_true_details_file = paths['ung_nt_true_details_file']
    ung_summary_file = paths['ung_summary_file']
-   
+
    output_plot_path = paths['output_plot_overall_path']
    output_analysis_csv = os.path.join(paths['output_dir'], 'analysis_results_overall.csv')
    output_analysis_txt = os.path.join(paths['output_dir'], 'analysis_results_overall.txt')
@@ -69,7 +69,7 @@ def generate_overall_plot(paths):
    selected_query_ids = selected_df['QueryID'].unique().tolist()
    num_selected_queries = len(selected_query_ids)
    print(f"成功加载了 {num_selected_queries} 个查询ID。")
-   
+
    df_acorn = df_acorn[df_acorn['QueryID'].isin(selected_query_ids)]
    df_ung_false = df_ung_false[df_ung_false['QueryID'].isin(selected_query_ids)]
    df_ung_true = df_ung_true[df_ung_true['QueryID'].isin(selected_query_ids)]
@@ -104,10 +104,10 @@ def generate_overall_plot(paths):
    merged_df['Recall_Method1'] = np.where(merged_df['EntryGroupT_ms'] <= merged_df['EntryGroupT_ms_ung_true'], merged_df['Recall'], merged_df['Recall_ung_true'])
    merged_df['Recall_Method2'] = np.where(term_m2_acorn_part <= merged_df['SearchT_ms'], merged_df['acorn_Recall'], merged_df['Recall'])
    merged_df['Recall_Method3'] = np.where(min_search_val == term_m2_acorn_part, merged_df['acorn_Recall'], np.where(min_search_val == merged_df['SearchT_ms'], merged_df['Recall'], merged_df['Recall_ung_true']))
-   
+
    ### 5. Group and aggregate ###
    grouped = merged_df.groupby('search_param')
-   
+
    ### 6. Calculate plotting data ###
    print("正在为绘图准备QPS-Recall数据...")
    plot_data = {}
@@ -136,18 +136,18 @@ def generate_overall_plot(paths):
    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
    plt.legend(fontsize=10)
    plt.xlim(0.7, 1.0)
-   
+
    ax = plt.gca()
    all_qps_values = pd.concat([data['QPS'] for data in plot_data.values()]).dropna()
    if not all_qps_values.empty:
       y_max = all_qps_values.max()
       ax.set_ylim(bottom=0, top=y_max * 1.05)
-   
+
    locator = mticker.MaxNLocator(nbins='auto', steps=[1, 2, 5, 10], integer=True)
    ax.yaxis.set_major_locator(locator)
    ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
    ax.yaxis.get_major_formatter().set_useOffset(False)
-   
+
    plt.savefig(output_plot_path, dpi=300, bbox_inches='tight')
    plt.close() # Close the figure to free memory
    print(f"✅ 总体图表绘制完成！已保存到：{os.path.abspath(output_plot_path)}")
@@ -156,7 +156,7 @@ def generate_querysize_plot(paths):
    """
    Generates side-by-side QPS-Recall charts, faceted by query attribute size.
    """
-   print("\n[步骤 4/4] 开始生成按QuerySize划分的QPS-Recall图...")
+   print("\n[步骤 4/5] 开始生成按QuerySize划分的QPS-Recall图...")
 
    # Load paths
    selected_queries_file = paths['selected_queries_file']
@@ -186,10 +186,10 @@ def generate_querysize_plot(paths):
    df_ung_false.rename(columns={'Lsearch': 'search_param'}, inplace=True)
    df_ung_true.rename(columns={'Lsearch': 'search_param'}, inplace=True)
    df_acorn = pd.merge(df_acorn, param_map, on='efs').drop(columns=['efs']).rename(columns={'Lsearch': 'search_param'})
-   
+
    selected_df = pd.read_csv(selected_queries_file)
    selected_query_ids = selected_df['QueryID'].unique().tolist()
-   
+
    df_acorn = df_acorn[df_acorn['QueryID'].isin(selected_query_ids)]
    df_ung_false = df_ung_false[df_ung_false['QueryID'].isin(selected_query_ids)]
    df_ung_true = df_ung_true[df_ung_true['QueryID'].isin(selected_query_ids)]
@@ -256,7 +256,19 @@ def generate_querysize_plot(paths):
       ax.set_title(f'QuerySize = {q_size} ({actual_queries_count} Queries)', fontsize=14)
       ax.set_xlabel('Recall@10', fontsize=12)
       ax.grid(True, which='both', linestyle='--', linewidth=0.5)
-      ax.set_xlim(0.7, 1.0)
+      # ax.set_xlim(0.7, 1.0)
+      # --- 动态计算X和Y轴范围 ---
+      all_qps_values = pd.concat([data['QPS'] for data in plot_data.values()]).dropna()
+      all_recall_values = pd.concat([data['Recall'] for data in plot_data.values()]).dropna()
+
+      if not all_qps_values.empty:
+            y_max = all_qps_values.max()
+            ax.set_ylim(bottom=0, top=y_max * 1.05) # Y轴上限增加5%的边距
+
+      if not all_recall_values.empty:
+            x_min = all_recall_values.min()
+            # X轴下限减少一点边距，上限固定为1.01以包含端点
+            ax.set_xlim(left=x_min * 0.99, right=1.00)
       
       all_qps_values = pd.concat([data['QPS'] for data in plot_data.values()]).dropna()
       if not all_qps_values.empty:
@@ -277,11 +289,188 @@ def generate_querysize_plot(paths):
       fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.95), ncol=6, fontsize=12)
 
    plt.tight_layout(rect=[0, 0, 1, 0.93]) # Adjust rect to make space for suptitle and legend
-   
+
    plt.savefig(output_plot_path, dpi=300, bbox_inches='tight')
    plt.close()
    print(f"\n✅ 按QuerySize划分的图表绘制完成！已保存到：{os.path.abspath(output_plot_path)}")
 
+def generate_selectivity_plot(paths):
+   """
+   Generates side-by-side QPS-Recall charts, faceted by Filter Selectivity,
+   with a shared, correctly scaled Y-axis and independent X-axes.
+   """
+   print("\n[步骤 5/5] 开始生成按Filter Selectivity划分的QPS-Recall图...")
+
+   # --- 1. 定义和加载路径 ---
+   selected_queries_file = paths['selected_queries_file']
+   acorn_details_file = paths['acorn_details_file']
+   acorn_avg_file = paths['acorn_avg_file']
+   ung_nt_false_details_file = paths['ung_nt_false_details_file']
+   ung_nt_true_details_file = paths['ung_nt_true_details_file']
+   ung_summary_file = paths['ung_summary_file']
+   attribute_coverage_file = paths['attribute_coverage_file']
+   output_plot_path = paths['output_plot_selectivity_path']
+   
+   TOTAL_VECTORS = paths.get('total_vectors')
+   if not TOTAL_VECTORS or TOTAL_VECTORS == 0:
+      print(f"❌ 错误: Total Vectors 值为无效值 ({TOTAL_VECTORS})。无法计算 Selectivity。")
+      return
+
+   # --- 2. 加载和预处理性能数据 ---
+   print("正在加载和预处理性能数据...")
+   df_acorn = pd.read_csv(acorn_details_file)
+   df_ung_false = pd.read_csv(ung_nt_false_details_file)
+   df_ung_true = pd.read_csv(ung_nt_true_details_file)
+   ung_bitmap_total_time = get_bitmap_time_from_summary(ung_summary_file)
+
+   # Map ACORN's 'efs' to UNG's 'Lsearch' to enable merging
+   acorn_params = sorted(df_acorn['efs'].unique())
+   ung_params = sorted(df_ung_false['Lsearch'].unique())
+   if len(acorn_params) != len(ung_params):
+      print("错误：ACORN和UNG的搜索参数个数不一致。")
+      return
+   
+   param_map = pd.DataFrame({'efs': acorn_params, 'Lsearch': ung_params})
+   df_acorn = pd.merge(df_acorn, param_map, on='efs').drop(columns=['efs'])
+
+   df_ung_false = df_ung_false.add_suffix('_ung_false')
+   df_ung_true = df_ung_true.add_suffix('_ung_true')
+   df_ung_false.rename(columns={'QueryID_ung_false': 'QueryID', 'Lsearch_ung_false': 'Lsearch'}, inplace=True)
+   df_ung_true.rename(columns={'QueryID_ung_true': 'QueryID', 'Lsearch_ung_true': 'Lsearch'}, inplace=True)
+
+   selected_df = pd.read_csv(selected_queries_file)
+   selected_query_ids = selected_df['QueryID'].unique().tolist()
+   
+   df_acorn = df_acorn[df_acorn['QueryID'].isin(selected_query_ids)]
+   df_ung_false = df_ung_false[df_ung_false['QueryID'].isin(selected_query_ids)]
+   df_ung_true = df_ung_true[df_ung_true['QueryID'].isin(selected_query_ids)]
+
+   merged_df_all = pd.merge(df_acorn, df_ung_false, on=['QueryID', 'Lsearch'])
+   merged_df_all = pd.merge(merged_df_all, df_ung_true, on=['QueryID', 'Lsearch'])
+   
+   merged_df_all.rename(columns={'Lsearch': 'search_param'}, inplace=True)# 将 'Lsearch' 重命名为通用名称 'search_param'
+
+   # --- 3. 加载、计算并合并 Filter Selectivity 数据  ---
+   try:
+      df_coverage = pd.read_csv(attribute_coverage_file)
+      df_coverage['QueryID'] = df_coverage.index
+      df_coverage['selectivity'] = df_coverage['coverage_count'] / TOTAL_VECTORS
+      bins = [0, 0.001, 0.1, 1.0]
+      labels = ['High (0-0.1%)', 'Medium (0.1-10%)', 'Low (10%-100%)']
+      df_coverage['selectivity_group'] = pd.cut(df_coverage['selectivity'], bins=bins, labels=labels, right=True)
+      merged_df_all = pd.merge(merged_df_all, df_coverage[['QueryID', 'selectivity', 'selectivity_group']], on='QueryID', how='left')
+      merged_df_all.dropna(subset=['selectivity_group'], inplace=True)
+   except (FileNotFoundError, Exception) as e:
+      print(f"处理Selectivity数据时出错: {e}")
+      return
+
+   # --- 4. 数据预处理，为所有子图准备数据并找到全局Y轴最大值 ---
+   print("正在为所有子图预处理数据并计算全局Y轴范围...")
+   all_groups_plot_data = {}
+   all_qps_values_global = []
+
+   for group_name in labels:
+      merged_df = merged_df_all[merged_df_all['selectivity_group'] == group_name].copy()
+      if merged_df.empty:
+         all_groups_plot_data[group_name] = None
+         continue
+
+      num_total_queries = merged_df['QueryID'].nunique()
+      acorn_bitmap_time = ung_bitmap_total_time / num_total_queries if num_total_queries > 0 else 0.0
+      ung_bitmap_time = ung_bitmap_total_time / num_total_queries if num_total_queries > 0 else 0.0
+      
+      # --- 5. 计算绘图所需指标 --
+      num_total_queries = merged_df['QueryID'].nunique()
+      acorn_bitmap_time = ung_bitmap_total_time / num_total_queries if num_total_queries > 0 else 0.0
+      ung_bitmap_time = ung_bitmap_total_time / num_total_queries if num_total_queries > 0 else 0.0
+
+      merged_df['Time_ACORN-1'] = merged_df['acorn_1_Time_ms'] + acorn_bitmap_time
+      merged_df['Time_ACORN-gamma'] = merged_df['acorn_Time_ms'] + acorn_bitmap_time
+      merged_df['Time_UNG'] = merged_df['SearchT_ms_ung_false'] # <--- 修改
+      merged_df['Time_Method1'] = np.minimum(merged_df['SearchT_ms_ung_false'], merged_df['SearchT_ms_ung_true']) # <--- 修改
+      term_m2_acorn_part = merged_df['acorn_Time_ms'] + ung_bitmap_time
+      merged_df['Time_Method2'] = np.minimum(term_m2_acorn_part, merged_df['SearchT_ms_ung_false']) + merged_df['FlagT_ms_ung_false'] # <--- 修改
+      min_search_val = np.minimum.reduce([term_m2_acorn_part, merged_df['SearchT_ms_ung_false'], merged_df['SearchT_ms_ung_true']]) # <--- 修改
+      merged_df['Time_Method3'] = min_search_val + np.where(min_search_val == merged_df['SearchT_ms_ung_true'], merged_df['FlagT_ms_ung_true'], merged_df['FlagT_ms_ung_false']) # <--- 修改
+      
+      merged_df['Recall_ACORN-1'] = merged_df['acorn_1_Recall']
+      merged_df['Recall_ACORN-gamma'] = merged_df['acorn_Recall']
+      merged_df['Recall_UNG'] = merged_df['Recall_ung_false'] # <--- 修改
+      merged_df['Recall_Method1'] = np.where(merged_df['EntryGroupT_ms_ung_false'] <= merged_df['EntryGroupT_ms_ung_true'], merged_df['Recall_ung_false'], merged_df['Recall_ung_true']) # <--- 修改
+      merged_df['Recall_Method2'] = np.where(term_m2_acorn_part <= merged_df['SearchT_ms_ung_false'], merged_df['acorn_Recall'], merged_df['Recall_ung_false']) # <--- 修改
+      merged_df['Recall_Method3'] = np.where(min_search_val == term_m2_acorn_part, merged_df['acorn_Recall'], np.where(min_search_val == merged_df['SearchT_ms_ung_false'], merged_df['Recall_ung_false'], merged_df['Recall_ung_true'])) # <--- 修改
+      
+      grouped = merged_df.groupby('search_param')
+      plot_data = {}
+      algorithms = ['ACORN-1', 'ACORN-gamma', 'UNG', 'Method1', 'Method2', 'Method3']
+      for alg in algorithms:
+         avg_time = grouped[f'Time_{alg}'].mean()
+         avg_recall = grouped[f'Recall_{alg}'].mean()
+         qps = 1 / (avg_time / 1000.0)
+         df_plot = pd.DataFrame({'Recall': avg_recall, 'QPS': qps}).sort_values(by='Recall').reset_index()
+         first_reach_one_idx = df_plot.index[df_plot['Recall'] >= 0.99999].tolist()
+         end_idx = first_reach_one_idx[0] if first_reach_one_idx else df_plot['Recall'].idxmax()
+         plot_data[alg] = df_plot.iloc[:end_idx + 1]
+         all_qps_values_global.append(plot_data[alg]['QPS']) # 收集QPS数据用于计算全局最大值
+      
+      all_groups_plot_data[group_name] = plot_data
+
+   # 计算全局Y轴最大值
+   global_y_max = 0
+   if all_qps_values_global:
+      global_y_max = pd.concat(all_qps_values_global).dropna().max()
+
+   # --- 5. 创建子图并使用预处理好的数据进行绘图 ---
+   fig, axes = plt.subplots(1, 3, figsize=(24, 7), sharey=True)
+   fig.suptitle('QPS-Recall Analysis by Filter Selectivity', fontsize=18)
+
+   if global_y_max > 0:
+      axes[0].set_ylim(bottom=0, top=global_y_max * 1.05)
+
+   handles, labels_legend = None, None
+   print("开始按Filter Selectivity分组进行绘图...")
+   for i, group_name in enumerate(labels):
+      ax = axes[i]
+      plot_data = all_groups_plot_data.get(group_name) # 获取预处理好的数据
+
+      if plot_data is None:
+         ax.text(0.5, 0.5, f'No data for\n{group_name} Selectivity', ha='center', va='center')
+         ax.set_title(f'Selectivity: {group_name}')
+         continue
+
+      actual_queries_count = merged_df_all[merged_df_all['selectivity_group'] == group_name]['QueryID'].nunique()
+      
+      # --- 6. 绘图 ---
+      markers = ['o', 's', '^', 'D', 'v', 'p']
+      for j, (alg, data) in enumerate(plot_data.items()):
+         ax.plot(data['Recall'], data['QPS'], marker=markers[j], linestyle='-', label=alg)
+
+      ax.set_title(f'Selectivity: {group_name} ({actual_queries_count} Queries)', fontsize=14)
+      ax.set_xlabel('Recall@10', fontsize=12)
+      ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+      
+      all_recall_values = pd.concat([data['Recall'] for data in plot_data.values()]).dropna()
+      if not all_recall_values.empty:
+         x_min = all_recall_values.min()
+         ax.set_xlim(left=x_min * 0.99, right=1.00)
+
+      # 格式化Y轴刻度（对所有共享轴都生效）
+      locator = mticker.MaxNLocator(nbins='auto', steps=[1, 2, 5, 10], integer=True)
+      ax.yaxis.set_major_locator(locator)
+      ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
+      ax.yaxis.get_major_formatter().set_useOffset(False)
+
+      if i == 0:
+         handles, labels_legend = ax.get_legend_handles_labels()
+
+   # --- 7. 格式化并保存最终图表 ---
+   axes[0].set_ylabel('QPS', fontsize=12)
+   if handles:
+      fig.legend(handles, labels_legend, loc='upper center', bbox_to_anchor=(0.5, 0.95), ncol=6, fontsize=12)
+   plt.tight_layout(rect=[0, 0, 1, 0.93])
+   plt.savefig(output_plot_path, dpi=300, bbox_inches='tight')
+   plt.close()
+   print(f"\n✅ 按Filter Selectivity划分的图表绘制完成！已保存到：{os.path.abspath(output_plot_path)}")
 
 def generate_comparison_plot(config, plot_config):
    """
@@ -291,7 +480,7 @@ def generate_comparison_plot(config, plot_config):
    base_dir = config['base_results_dir']
    dataset = config['dataset']
    templates = config['structure_templates']
-   
+
    plot_type = plot_config['type']
    output_filename = plot_config['output_filename']
    title = plot_config['title']
@@ -430,23 +619,35 @@ def generate_comparison_plot(config, plot_config):
          ax.set_title(f'K = {k_val} ({actual_queries_count} Queries)', fontsize=14)
          ax.set_xlabel(f'Recall@{k_val}', fontsize=12)
          ax.grid(True, which='both', linestyle='--', linewidth=0.5)
-         ax.set_xlim(0.7, 1.0)
-         if i == 0:
-               handles, labels = ax.get_legend_handles_labels()
+         # ax.set_xlim(0.7, 1.0)
+         # --- 动态计算X和Y轴范围 ---
+         all_qps_values = pd.concat([data['QPS'] for data in plot_data.values()]).dropna()
+         all_recall_values = pd.concat([data['Recall'] for data in plot_data.values()]).dropna()
+
+         if not all_qps_values.empty:
+            y_max = all_qps_values.max()
+            ax.set_ylim(bottom=0, top=y_max * 1.05) # Y轴上限增加5%的边距
+
+         if not all_recall_values.empty:
+            x_min = all_recall_values.min()
+            # X轴下限减少一点边距，上限固定为1.01以包含端点
+            ax.set_xlim(left=x_min * 0.99, right=1.00)
+            if i == 0:
+                  handles, labels = ax.get_legend_handles_labels()
 
       except FileNotFoundError as e:
          print(f"❌ 错误: 找不到实验 '{exp_name}' 的数据文件 -> {e.filename}。跳过。")
          ax.text(0.5, 0.5, f'Data not found for\n{exp_name}', ha='center', va='center', color='red')
          ax.set_title(exp_name)
          continue
-   
+
    # --- 统一格式化和保存 ---
    if num_plots > 0 and 'axes' in locals() and len(axes) > 0:
       axes[0].set_ylabel('QPS', fontsize=12)
    if handles:
       fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.95), ncol=6, fontsize=12)
    plt.tight_layout(rect=[0, 0, 1, 0.93])
-   
+
    output_path = os.path.join(config['base_results_dir'], "merge_results/experiments", dataset, f"query{params['query_num']}", output_filename)
    plt.savefig(output_path, dpi=300, bbox_inches='tight')
    plt.close()

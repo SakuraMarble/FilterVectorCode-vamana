@@ -2,6 +2,7 @@ import json
 import os
 import argparse
 from modules import process, select, plot
+import re
 
 def run_experiment(config, experiment_config):
     """
@@ -27,6 +28,16 @@ def run_experiment(config, experiment_config):
     # ACORN 路径
     acorn_search_params = templates['acorn_search_params'].format(**params)
     acorn_index_handle = templates['acorn_index_handle']
+    # 自动从 acorn_index_handle 解析 Total Vectors
+    total_vectors = 0
+    match = re.search(r'N(\d+)', acorn_index_handle)
+    if match:
+        total_vectors = int(match.group(1))
+        print(f"... 成功从 '{acorn_index_handle}' 中自动提取 Total Vectors: {total_vectors}")
+    else:
+        print(f"⚠️ 警告: 未能从 '{acorn_index_handle}' 中自动提取 Total Vectors。请检查 config.json。")
+    paths['total_vectors'] = total_vectors
+
     acorn_base = os.path.join(base_dir, "ACORN", dataset, "Results", f"index_{acorn_index_handle}", f"query{params['query_num']}_{acorn_search_params}", "results")
     acorn_file = templates['acorn_file_pattern'].format(**params)
     paths['acorn_details_file'] = os.path.join(acorn_base, acorn_file)
@@ -49,6 +60,8 @@ def run_experiment(config, experiment_config):
     paths['selected_queries_file'] = os.path.join(merge_dir, f"selected_queries_{experiment_config['analysis_params']['selection_mode']}.csv")
     paths['output_plot_overall_path'] = os.path.join(merge_dir, "qps_recall_curve.png")
     paths['output_plot_querysize_path'] = os.path.join(merge_dir, "qps_recall_curve_by_querysize.png")
+    paths['attribute_coverage_file'] = templates['attribute_coverage_file'].format(**params, dataset=dataset)
+    paths['output_plot_selectivity_path'] = os.path.join(merge_dir, "qps_recall_curve_by_selectivity.png")
     paths['output_dir'] = merge_dir
     
     # 打印将要使用的关键路径以供核对
@@ -69,6 +82,10 @@ def run_experiment(config, experiment_config):
         # 步骤 3: 绘制整体性能图和按查询大小划分的图
         plot.generate_overall_plot(paths)
         plot.generate_querysize_plot(paths)
+
+        # 步骤 4: 绘制按Filter Selectivity划分的图 (可选) 
+        if experiment_config.get('analysis_params', {}).get('generate_selectivity_plot', False):
+            plot.generate_selectivity_plot(paths)
 
     except FileNotFoundError as e:
         print(f"❌ 文件未找到错误: {e.filename}")
