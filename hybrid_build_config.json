@@ -1,0 +1,42 @@
+{
+   "experiments": [
+      {
+         "common_params": {
+            "dataset": "celeba",
+            "query_num": 7,
+            "base_data_dir": "/data/fxy/FilterVector/FilterVectorData"
+         },
+         "ung_params": {
+            "max_degree": 32,
+            "Lbuild": 100,
+            "alpha": 1.2,
+            "num_cross_edges": 6
+         },
+         "acorn_params": {
+            "N": 202599,
+            "M": 32,
+            "M_beta": 64,
+            "gamma": 80
+         }
+      },
+      {
+         "common_params": {
+            "dataset": "celeba",
+            "query_num": 8,
+            "base_data_dir": "/data/fxy/FilterVector/FilterVectorData"
+         },
+         "ung_params": {
+            "max_degree": 32,
+            "Lbuild": 100,
+            "alpha": 1.2,
+            "num_cross_edges": 6
+         },
+         "acorn_params": {
+            "N": 202599,
+            "M": 32,
+            "M_beta": 64,
+            "gamma": 80
+         }
+      }
+   ]
+ }

@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <random>
+#include <omp.h>
 
 #include <sys/time.h>
 
@@ -1460,7 +1461,8 @@ std::vector<std::vector<std::pair<int, float>>> read_all_sorted_filtered_distanc
     size_t N)
 {
    std::vector<std::vector<std::pair<int, float>>> sorted_results(nq);
-
+   
+   #pragma omp parallel for
    for (size_t xq = 0; xq < nq; xq++)
    {
       // Construct the filename (e.g., "filtered_sorted_distances/query_results_0.txt")
@@ -1505,6 +1507,7 @@ std::vector<float> compute_recall(
 {
    std::vector<float> recalls(nq, 0.0f);
 
+   #pragma omp parallel for
    for (size_t i = 0; i < nq; i++)
    {
       // 获取算法返回的有效 Top-K ID（跳过无效值，假设无效值为 -1）

@@ -382,10 +382,16 @@ int main(int argc, char* argv[]) {
                   f.close();
             }
          }
-         std::cout<<"Search will use ground truth from: " << MY_DIS_SORT_DIR << std::endl;
 
-        // --- 多次重复执行搜索 ---
-        for (int repeat = 0; repeat < repeat_num; repeat++) {
+         // --- 预加载 Ground Truth ---
+         std::cout << "\n[INFO] Pre-loading ground truth data into memory once..." << std::endl;
+         double t_load_gt_start = elapsed();
+         auto sorted_results_gt = read_all_sorted_filtered_distances_from_txt(std::string(MY_DIS_SORT_DIR), nq, N);
+         double t_load_gt_end = elapsed();
+         printf("[INFO] Ground truth loaded in %.3f s.\n\n", t_load_gt_end - t_load_gt_start);
+
+         // --- 多次重复执行搜索 ---
+         for (int repeat = 0; repeat < repeat_num; repeat++) {
             std::cout<<"=============== Repeat "<< repeat + 1<<"/"<< repeat_num <<" ==============="<< std::endl;
             for (int efs_id = 0; efs_id < efs_cnt; efs_id++) {
                 int current_efs = efs_list[efs_id];
@@ -421,10 +427,9 @@ int main(int argc, char* argv[]) {
                 const faiss::ACORNStats& acorn1_search_stats = faiss::acorn_stats;
                 
                 // --- 计算 Recall ---
-                auto sorted_results = read_all_sorted_filtered_distances_from_txt(std::string(MY_DIS_SORT_DIR), nq, N);
-                auto recalls_acorn = compute_recall(nns2, sorted_results, nq, k);
+                auto recalls_acorn = compute_recall(nns2, sorted_results_gt, nq, k);
                 float recall_mean_acorn = std::accumulate(recalls_acorn.begin(), recalls_acorn.end(), 0.0f) / nq;
-                auto recalls_acorn1 = compute_recall(nns3, sorted_results, nq, k);
+                auto recalls_acorn1 = compute_recall(nns3, sorted_results_gt, nq, k);
                 float recall_mean_acorn1 = std::accumulate(recalls_acorn1.begin(), recalls_acorn1.end(), 0.0f) / nq;
 
                 std::cout<< "  ACORN   | Time: "<< search_time_acorn_s <<" s, QPS: "<< nq / search_time_acorn_s <<", Recall: "<< recall_mean_acorn << std::endl;

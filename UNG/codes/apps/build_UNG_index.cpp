@@ -74,45 +74,45 @@ int main(int argc, char **argv)
                          "Alpha for building Vamana");
 
       // parameters for acorn in ung
-      desc.add_options()("ung_and_acorn", po::value<bool>(&ung_and_acorn)->required(),
+      desc.add_options()("ung_and_acorn", po::value<bool>(&ung_and_acorn)->default_value("false"),
                          "ung_and_acorn");
-      desc.add_options()("new_edge_policy", po::value<std::string>(&new_edge_policy)->required(),
+      desc.add_options()("new_edge_policy", po::value<std::string>(&new_edge_policy)->default_value("false"),
                          "new_edge_policy");
-      desc.add_options()("R_in_add_new_edge", po::value<int>(&R_in_add_new_edge)->required(),
+      desc.add_options()("R_in_add_new_edge", po::value<int>(&R_in_add_new_edge)->default_value(50),
                          "R_in_add_new_edge");
-      desc.add_options()("W_in_add_new_edge", po::value<int>(&W_in_add_new_edge)->required(),
+      desc.add_options()("W_in_add_new_edge", po::value<int>(&W_in_add_new_edge)->default_value(50),
                          "W_in_add_new_edge");
-      desc.add_options()("M_in_add_new_edge", po::value<int>(&M_in_add_new_edge)->required(),
+      desc.add_options()("M_in_add_new_edge", po::value<int>(&M_in_add_new_edge)->default_value(4),
                          "M_in_add_new_edge");
-      desc.add_options()("layer_depth_retio", po::value<float>(&layer_depth_retio)->required(),
+      desc.add_options()("layer_depth_retio", po::value<float>(&layer_depth_retio)->default_value(0.8),
                          "The proportion of the total number of candidates to the total number of vectors");
-      desc.add_options()("query_vector_ratio", po::value<float>(&query_vector_ratio)->required(),
+      desc.add_options()("query_vector_ratio", po::value<float>(&query_vector_ratio)->default_value(0.8),
                          "The proportion of the query vector to the total number of candidates");
-      desc.add_options()("root_coverage_threshold", po::value<float>(&root_coverage_threshold)->required(),
+      desc.add_options()("root_coverage_threshold", po::value<float>(&root_coverage_threshold)->default_value(0.4),
                          "A single attribute is regarded as the minimum coverage of the concept root");
-      desc.add_options()("acorn_in_ung_output_path", po::value<std::string>(&acorn_in_ung_output_path)->required(),
+      desc.add_options()("acorn_in_ung_output_path", po::value<std::string>(&acorn_in_ung_output_path)->default_value("false"),
                          "acorn_in_ung_output_path");
-      desc.add_options()("M", po::value<int>(&M)->required(),
+      desc.add_options()("M", po::value<int>(&M)->default_value(32),
                          "M in acorn");
-      desc.add_options()("M_beta", po::value<int>(&M_beta)->required(),
+      desc.add_options()("M_beta", po::value<int>(&M_beta)->default_value(64),
                          "M_beta in acorn");
-      desc.add_options()("gamma", po::value<int>(&gamma)->required(),
+      desc.add_options()("gamma", po::value<int>(&gamma)->default_value(80),
                          "gamma in acorn");
-      desc.add_options()("efs", po::value<int>(&efs)->required(),
+      desc.add_options()("efs", po::value<int>(&efs)->default_value(1000),
                          "efs in acorn");
-      desc.add_options()("compute_recall", po::value<int>(&compute_recall)->required(),
+      desc.add_options()("compute_recall", po::value<int>(&compute_recall)->default_value(1),
                          "compute_recall in acorn");
 
       // query file
-      desc.add_options()("generate_query", po::value<bool>(&generate_query)->required(),
+      desc.add_options()("generate_query", po::value<bool>(&generate_query)->default_value("false"),
                          "Whether to generate query file");
-      desc.add_options()("generate_query_task", po::value<std::string>(&generate_query_task)->default_value("no"),
+      desc.add_options()("generate_query_task", po::value<std::string>(&generate_query_task)->default_value("false"),
                          "generate_query_task");
       desc.add_options()("query_file_path", po::value<std::string>(&query_file_path)->default_value("my_words_query"),
                          "Query label file");
       desc.add_options()("dataset", po::value<std::string>(&dataset)->required(),
                          "dataset");
-      desc.add_options()("method1_high_coverage_p", po::value<float>(&method1_high_coverage_p)->required(),
+      desc.add_options()("method1_high_coverage_p", po::value<float>(&method1_high_coverage_p)->default_value(0.7),
                          "method1_high_coverage_p");
 
       po::variables_map vm;
@@ -176,7 +176,7 @@ int main(int argc, char **argv)
    // index2.load_bipartite_graph(index_path_prefix + "vector_attr_graph");
    // index2.compare_graphs(index, index2);
 
-   if (generate_query)
+   /*if (generate_query)
    {
       // 生成查询标签和查询向量：(文件名，每个group中有几个查询向量, 每个属性的概率, 是否分层抽样, 是否验证是子集)
       std::cout << "Generating query file ..." << std::endl;
@@ -236,7 +236,7 @@ int main(int argc, char **argv)
       {
          std::cout << "Error in generate_query_task" << std::endl;
       }
-   }
+   }*/
 
    return 0;
 }

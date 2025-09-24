@@ -51,6 +51,19 @@ else()
     message(STATUS "CRoaring library found at: ${ROARING_LIB}")
 endif()
 
+# ONNX
+set(ONNXRUNTIME_DIR "${PROJECT_SOURCE_DIR}/third_party/onnxruntime-linux-x64-1.16.3" CACHE PATH "Path to ONNX Runtime directory")
+if(EXISTS ${ONNXRUNTIME_DIR})
+    include_directories(${ONNXRUNTIME_DIR}/include)
+    add_library(onnxruntime SHARED IMPORTED)
+    set_target_properties(onnxruntime PROPERTIES
+        IMPORTED_LOCATION "${ONNXRUNTIME_DIR}/lib/libonnxruntime.so"
+    )
+    message(STATUS "Found ONNX Runtime at: ${ONNXRUNTIME_DIR}")
+else()
+    message(FATAL_ERROR "ONNX Runtime not found at specified path: ${ONNXRUNTIME_DIR}. Please check the path in CMakeLists.txt")
+endif()
+
 # add subdirectories
 add_subdirectory(vamana)
 add_subdirectory(src)

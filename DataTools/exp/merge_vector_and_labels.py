@@ -83,19 +83,19 @@ if __name__ == "__main__":
     # --- 1. 设置文件名 ---
     txt_files_to_merge = ['/data/fxy/FilterVector/FilterVectorData/celeba/query_sub_base_l=2/celeba_query_labels.txt',
                           '/data/fxy/FilterVector/FilterVectorData/celeba/query_sub_base_l=5/celeba_query_labels.txt',
-                          '/data/fxy/FilterVector/FilterVectorData/celeba/query_sub_base_l=8/celeba_query_labels.txt']
+                          '/data/fxy/FilterVector/FilterVectorData/celeba/query_sub_base_l=9/celeba_query_labels.txt']
     
     fvecs_files_to_merge = ['/data/fxy/FilterVector/FilterVectorData/celeba/query_sub_base_l=2/celeba_query.fvecs', 
                             '/data/fxy/FilterVector/FilterVectorData/celeba/query_sub_base_l=5/celeba_query.fvecs',
-                            '/data/fxy/FilterVector/FilterVectorData/celeba/query_sub_base_l=8/celeba_query.fvecs']
+                            '/data/fxy/FilterVector/FilterVectorData/celeba/query_sub_base_l=9/celeba_query.fvecs']
 
     csv_files_to_merge = ['/data/fxy/FilterVector/FilterVectorData/celeba/query_sub_base_l=2/profiled_sub_base_l=2.csv',
                           '/data/fxy/FilterVector/FilterVectorData/celeba/query_sub_base_l=5/profiled_sub_base_l=5.csv',
-                          '/data/fxy/FilterVector/FilterVectorData/celeba/query_sub_base_l=8/profiled_sub_base_l=8.csv']
+                          '/data/fxy/FilterVector/FilterVectorData/celeba/query_sub_base_l=9/profiled_sub_base_l=9.csv']
 
-    merged_txt_file = '/data/fxy/FilterVector/FilterVectorData/celeba/query_4/celeba_query_labels.txt'
-    merged_fvecs_file = '/data/fxy/FilterVector/FilterVectorData/celeba/query_4/celeba_query.fvecs'
-    merged_csv_file = '/data/fxy/FilterVector/FilterVectorData/celeba/query_4/attribute_coverage_merged.csv'
+    merged_txt_file = '/data/fxy/FilterVector/FilterVectorData/celeba/query_8/celeba_query_labels.txt'
+    merged_fvecs_file = '/data/fxy/FilterVector/FilterVectorData/celeba/query_8/celeba_query.fvecs'
+    merged_csv_file = '/data/fxy/FilterVector/FilterVectorData/celeba/query_8/attribute_coverage_merged.csv'
 
     # --- 2. 执行合并操作 ---
     print("开始合并文本文件...")

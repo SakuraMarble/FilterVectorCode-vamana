@@ -1,0 +1,179 @@
+{
+   "global_settings": {
+     "base_results_dir": "/data/fxy/FilterVector/FilterVectorResults",
+     "attribute_data_root": "/data/fxy/FilterVector/FilterVectorData"
+   },
+ 
+   "dataset_configurations": {
+     
+     "celeba": {
+       "description": "Configuration for the CelebA dataset.",
+       "build_params": {
+         "N": 202599,
+         "M": 32,
+         "gamma": 80,
+         "M_beta": 64,
+         "max_degree": 32,
+         "Lbuild": 100,
+         "alpha": 1.2,
+         "num_cross_edges": 6
+       },
+       "structure_templates": {
+         "acorn_index_handle": "N{N}_M{M}_gamma{gamma}_Mb{M_beta}",
+         "acorn_search_params": "threads{threads}_k{K}_repeat1_ifbfstrue_efs10-5-205",
+         "acorn_file_pattern": "celeba_query{query_num}_M{M}_gamma{gamma}_threads{threads}_repeat1_ifbfs0_efs10-205_5.csv",
+         "ung_index_handle": "Q{query_num}_M{max_degree}_LB{Lbuild}_alpha{alpha}_C{num_cross_edges}_EP16",
+         "ung_gt_handle": "Q{query_num}_K{K}",
+         "ung_search_handle_false": "Ls1000-Le40000-Lp1000_K{K}_nTfalse_rmsfalse_th{threads}",
+         "ung_search_handle_true": "Ls1000-Le40000-Lp1000_K{K}_nTtrue_rmstrue_th{threads}",
+         "attribute_coverage_file": "{attribute_data_root}/{dataset}/query_{query_num}/attribute_coverage_merged.csv"
+       },
+       "experiments": [
+         {
+            "enabled": false,
+            "name": "query{query_num}_K{K}_T{threads}",
+            "parameters": { "query_num": 7, "K": 5, "threads": 10 },
+            "analysis_params": { "selection_mode": "center_select", "center_percentile": 0.7, "query_sizes_to_process": [2, 5, 9], "num_queries_per_size": 1000 }
+         },
+         {
+           "enabled": false,
+           "name": "query{query_num}_K{K}_T{threads}",
+           "parameters": { "query_num": 7, "K": 10, "threads": 10 },
+           "analysis_params": { "selection_mode": "center_select", "center_percentile": 0.7, "query_sizes_to_process": [2, 5, 9], "num_queries_per_size": 1000 }
+         },
+         {
+            "enabled": false,
+            "name": "query{query_num}_K{K}_T{threads}",
+            "parameters": { "query_num": 7, "K": 20, "threads": 10 },
+            "analysis_params": { "selection_mode": "center_select", "center_percentile": 0.7, "query_sizes_to_process": [2, 5, 9], "num_queries_per_size": 1000 }
+         },
+         {
+            "enabled": false,
+            "name": "query{query_num}_K{K}_T{threads}",
+            "parameters": { "query_num": 8, "K": 5, "threads": 10 },
+            "analysis_params": { "selection_mode": "center_select", "center_percentile": 1.0, "query_sizes_to_process": [2, 5, 9], "num_queries_per_size": 1000 }
+         },
+         {
+           "enabled": false,
+           "name": "query{query_num}_K{K}_T{threads}",
+           "parameters": { "query_num": 8, "K": 10, "threads": 10 },
+           "analysis_params": { "selection_mode": "center_select", "center_percentile": 1.0, "query_sizes_to_process": [2, 5, 9], "num_queries_per_size": 1000 }
+         },
+         {
+            "enabled": false,
+            "name": "query{query_num}_K{K}_T{threads}",
+            "parameters": { "query_num": 8, "K": 20, "threads": 10 },
+            "analysis_params": { "selection_mode": "center_select", "center_percentile": 1.0, "query_sizes_to_process": [2, 5, 9], "num_queries_per_size": 1000 }
+         }
+       ]
+     }
+   },
+ 
+   "global_comparison_tasks": {
+     "qps_recall_plots": [
+         {
+            "enabled": false,
+            "task_name": "Overall Query Performance",
+            "output_filename": "celeba_query7_k10_overall.png",
+            "title": "Overall Query Performance(K=10,T=10)",
+            "items_to_compare": [
+            { "dataset": "celeba", "experiment_name": "query7_K10_T10" }
+            ]
+         },
+         {
+            "enabled": false,
+            "task_name": "Overall Query Performance",
+            "output_filename": "celeba_query8_k10_overall.png",
+            "title": "Overall Query Performance(K=10,T=10)",
+            "items_to_compare": [
+            { "dataset": "celeba", "experiment_name": "query8_K10_T10" }
+            ]
+         },
+         {
+            "enabled": false,
+            "task_name": "K Comparison",
+            "output_filename": "celeba_query7_comparison_by_k.png",
+            "title": "QPS-Recall Analysis by K Value",
+            "items_to_compare": [
+            { "dataset": "celeba", "experiment_name": "query7_K5_T10" },
+            { "dataset": "celeba", "experiment_name": "query7_K10_T10" },
+            { "dataset": "celeba", "experiment_name": "query7_K20_T10" }
+            ]
+         },
+         {
+            "enabled": false,
+            "task_name": "K Comparison",
+            "output_filename": "celeba_query8_comparison_by_k.png",
+            "title": "QPS-Recall Analysis by K Value",
+            "items_to_compare": [
+            { "dataset": "celeba", "experiment_name": "query8_K5_T10" },
+            { "dataset": "celeba", "experiment_name": "query8_K10_T10" },
+            { "dataset": "celeba", "experiment_name": "query8_K20_T10" }
+            ]
+         },
+         {
+            "enabled": false,
+            "task_name": "QuerySize Comparison",
+            "type": "querysize",
+            "output_filename": "celeba_query7_by_querysize.png",
+            "title": "QPS-Recall Analysis by Query Size",
+            "items_to_compare": [
+            { "dataset": "celeba", "experiment_name": "query7_K10_T10" }
+            ]
+         },
+         {
+            "enabled": false,
+            "task_name": "Selectivity Comparison",
+            "type": "selectivity",
+            "output_filename": "celeba_query7_by_selectivity.png",
+            "title": "QPS-Recall Analysis by Filter Selectivity",
+            "items_to_compare": [
+            { "dataset": "celeba", "experiment_name": "query7_K10_T10" }
+            ]
+         },
+         {
+            "enabled": false,
+            "task_name": "Celeba_By_QuerySize_Comparison",
+            "type": "querysize",
+            "output_filename": "celeba_query8_by_querysize.png",
+            "title": "QPS-Recall Analysis by Query Size",
+            "items_to_compare": [
+            { "dataset": "celeba", "experiment_name": "query8_K10_T10" }
+            ]
+         },
+         {
+            "enabled": false,
+            "task_name": "Celeba_By_Selectivity_Comparison",
+            "type": "selectivity",
+            "output_filename": "celeba_query8_by_selectivity.png",
+            "title": "QPS-Recall Analysis by Filter Selectivity",
+            "items_to_compare": [
+            { "dataset": "celeba", "experiment_name": "query8_K10_T10" }
+            ]
+         }
+     ],
+
+     "build_plots": [
+         {
+            "enabled": true,
+            "task_name": "Build_Performance_Summary",
+            "output_filename_prefix": "build_performance_summary",
+            "title": "Build Performance Summary",
+            "items_to_compare": [
+               {
+                  "dataset": "celeba",
+                  "group_title": "Celeba (Q7)",
+                  "type": "Hybrid",
+                  "build_params": { "query_num": 7 }
+               },
+               {
+                  "dataset": "celeba",
+                  "group_title": "Celeba (Q7)",
+                  "type": "Standalone",
+                  "build_params": { "query_num": 7, "K": 10, "threads": 10 }
+               }
+            ]
+         }
+      ]
+   }
+ }
