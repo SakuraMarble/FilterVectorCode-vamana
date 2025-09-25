@@ -56,6 +56,7 @@ echo "结果将保存到: $RESULT_OUTPUT_DIR"
     --gt_file "$GT_PATH/${DATASET}_gt_labels_containment.bin" \
     --index_path_prefix "$INDEX_PATH/index_files/" \
     --result_path_prefix "$RESULT_OUTPUT_DIR/results/" \
+    --selector_modle_prefix "$INDEX_PATH/SelectModels/" \
     --scenario containment \
     --num_entry_points "$NUM_ENTRY_POINTS" \
     --Lsearch $LSEARCH_VALUES > "$RESULT_OUTPUT_DIR/others/${DATASET}_search_output.txt" 2>&1

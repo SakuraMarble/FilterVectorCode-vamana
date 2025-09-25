@@ -42,7 +42,7 @@ float calculate_single_query_recall(const std::pair<ANNS::IdxType, float> *gt,
 int main(int argc, char **argv)
 {
    std::string data_type, dist_fn, scenario;
-   std::string base_bin_file, query_bin_file, base_label_file, query_label_file, gt_file, index_path_prefix, result_path_prefix, query_group_id_file;
+   std::string base_bin_file, query_bin_file, base_label_file, query_label_file, gt_file, index_path_prefix, result_path_prefix, selector_modle_prefix,query_group_id_file;
    ANNS::IdxType K, num_entry_points;
    std::vector<ANNS::IdxType> Lsearch_list;
    uint32_t num_threads;
@@ -76,6 +76,8 @@ int main(int argc, char **argv)
                          "Number of threads to use");
       desc.add_options()("result_path_prefix", po::value<std::string>(&result_path_prefix)->required(),
                          "Path to save the querying result file");
+      desc.add_options()("selector_modle_prefix", po::value<std::string>(&selector_modle_prefix)->required(),
+                         "Path to selector_modle_prefix");
       desc.add_options()("query_group_id_file", po::value<std::string>(&query_group_id_file)->required(),
                          "query_group_id_file");
 
@@ -129,7 +131,7 @@ int main(int argc, char **argv)
 
    // load index
    ANNS::UniNavGraph index(query_storage->get_num_points());
-   index.load(index_path_prefix, data_type);
+   index.load(index_path_prefix, selector_modle_prefix, data_type);
    index.load_bipartite_graph(index_path_prefix + "vector_attr_graph");
 
    // 加载查询来源组ID文件
@@ -273,7 +275,7 @@ int main(int argc, char **argv)
 
    // save query details for every query
    std::ofstream detail_out(result_path_prefix + "query_details_repeat" + std::to_string(num_repeats) + ".csv");
-   detail_out << "repeat,Lsearch,QueryID,Time_ms,MinSupersetT_ms,EntryGroupT_ms,DescMergeT_ms,CovMergeT_ms,"
+   detail_out << "repeat,Lsearch,QueryID,Time_ms,idea1_flag_ms,MinSupersetT_ms,EntryGroupT_ms,DescMergeT_ms,CovMergeT_ms,"
               << "FlagT_ms,BitmapT_ms,SearchT_ms,DistCalcs,NumEntries,NumDescendants,TotalCoverage,QuerySize,"
               << "CandSize,SuccessChecks,HitRatio,RecurCalls,PruneEvents,PruneEff,TrieNodePass,M1TrieReNode,NumNodeVisited,"
               << "QPS,Recall,IsGlobal\n";
@@ -288,6 +290,7 @@ int main(int argc, char **argv)
                        << Lsearch_list[LsearchId] << ","
                        << i << ","
                        << query_stats[repeat][LsearchId][i].time_ms << ","
+                       << query_stats[repeat][LsearchId][i].idea1_flag_time_ms << ","
                        << query_stats[repeat][LsearchId][i].get_min_super_sets_time_ms << ","
                        << query_stats[repeat][LsearchId][i].get_group_entry_time_ms << ","
                        << query_stats[repeat][LsearchId][i].descendants_merge_time_ms << ","

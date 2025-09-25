@@ -24,7 +24,7 @@ TrieMethodSelector::TrieMethodSelector(const std::string& model_path)
     // 1. 获取输入节点的名称
     //    使用一个临时的 unique_ptr 来接收 ONNX Runtime 分配的内存
     Ort::AllocatedStringPtr input_name_ptr = _session.GetInputNameAllocated(0, _allocator);
-    //    将 C 风格字符串复制到我们自己的 std::string 成员变量中进行管理
+    //    将 C 风格字符串复制到自己的 std::string 成员变量中进行管理
     _input_name_str = input_name_ptr.get();
     //    将 std::string 的 C 风格字符串指针 (.c_str()) 存入向量，供 Run() 函数使用
     _input_node_names.push_back(_input_name_str.c_str());

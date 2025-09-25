@@ -43,8 +43,8 @@ namespace ANNS
    {
       size_t label_cardinality = 0;
       size_t total_nodes = 0;
-      double avg_path_length = 0.0;
-      double avg_branching_factor = 0.0;
+      float avg_path_length = 0.0;
+      float avg_branching_factor = 0.0;
       std::map<ANNS::LabelType, size_t> label_frequency;
    };
 

@@ -2308,7 +2308,6 @@ namespace ANNS
          // 获取查询标签集
          const auto &query_labels = _query_storage->get_label_set(id);
 
-         // 新增指标记录
          stats.query_length = query_labels.size(); // 记录查询长度
          if (!query_labels.empty())                // 记录候选集大小
             stats.candidate_set_size = _trie_index.get_candidate_count_for_label(query_labels.back());
@@ -2319,48 +2318,115 @@ namespace ANNS
          auto get_entry_group_start_time = std::chrono::high_resolution_clock::now();
          std::vector<IdxType> entry_group_ids;
 
-         // 是否使用更多的入口组
-         if (!is_ung_more_entry)
+         // ======================= idea1 selector begin =======================
+         if (is_new_trie_method)
          {
-            static std::atomic<int> trie_debug_print_counter{0};
-            auto get_min_super_sets_satrt_time = std::chrono::high_resolution_clock::now();
-            get_min_super_sets_debug(query_labels, entry_group_ids, false, true,
-                                     trie_debug_print_counter, is_new_trie_method, is_rec_more_start, stats);
-            stats.get_min_super_sets_time_ms = std::chrono::duration<double, std::milli>(
-                                                   std::chrono::high_resolution_clock::now() - get_min_super_sets_satrt_time)
-                                                   .count();
-            stats.num_entry_points = entry_group_ids.size();
-         }
-         else
-         {
+            // --- 【路径 A: 启用智能决策模型 (idea1 selector)】 ---
+            // 1. 默认决策
+            bool is_new_trie_method_decision; 
 
-            IdxType true_group_id = 0;
-            if (id < true_query_group_ids.size())
-            {
-               true_group_id = true_query_group_ids[id]; // 获取当前查询的真实组ID
+            // 2. 实时预测
+            if (_trie_method_selector != nullptr) {
+               auto idea1_flag_satrt_time = std::chrono::high_resolution_clock::now();
+
+               // 2.1 准备特征
+               const auto& trie_metrics = _trie_static_metrics;
+               const float epsilon = 1e-9f;
+               const float avg_query_size = static_cast<float>(stats.query_length);
+               const float avg_cand_size = static_cast<float>(stats.candidate_set_size);
+               
+               const float query_depth_ratio = avg_query_size / (trie_metrics.avg_path_length + epsilon);
+               const float cand_set_coverage_ratio = avg_cand_size / (static_cast<float>(trie_metrics.total_nodes) + epsilon);
+               const float query_path_density = avg_query_size * trie_metrics.avg_branching_factor;
+               const float avg_nodes_per_label = static_cast<float>(trie_metrics.total_nodes) / (static_cast<float>(trie_metrics.label_cardinality) + epsilon);
+               const float cand_set_selectivity = avg_nodes_per_label / (avg_cand_size + epsilon);
+               const float query_cand_ratio = avg_query_size / (avg_cand_size + epsilon);
+               const float avg_cand_size_sq = avg_cand_size * avg_cand_size;
+               const float query_depth_ratio_sq = query_depth_ratio * query_depth_ratio;
+               const float cand_x_query_interaction = avg_cand_size * avg_query_size;
+               const float log_avg_cand_size = std::log1p(avg_cand_size);
+               const float branching_x_candsize = trie_metrics.avg_branching_factor * avg_cand_size;
+
+               // 2.2 构建特征向量
+               std::vector<float> features = {
+                  query_depth_ratio, cand_set_coverage_ratio, query_path_density,
+                  cand_set_selectivity, query_cand_ratio, avg_cand_size_sq,
+                  query_depth_ratio_sq, cand_x_query_interaction, log_avg_cand_size,
+                  branching_x_candsize
+               };
+
+               // 2.3 调用模型预测
+               try {
+                  is_new_trie_method_decision = _trie_method_selector->predict(features);
+               } catch (const std::exception& e) {
+                  std::cerr << "Query " << id << " prediction error: " << e.what() << ". Falling back to default method." << std::endl;
+               }
+               stats.idea1_flag_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - idea1_flag_satrt_time).count();
             }
-            std::vector<IdxType> base_entry_groups;
-            static std::atomic<int> trie_debug_print_counter{0};
-            auto get_min_super_sets_satrt_time = std::chrono::high_resolution_clock::now();
-            get_min_super_sets_debug(query_labels, base_entry_groups, false, true,
-                                     trie_debug_print_counter, is_new_trie_method, is_rec_more_start, stats);
-            stats.get_min_super_sets_time_ms = std::chrono::duration<double, std::milli>(
-                                                   std::chrono::high_resolution_clock::now() - get_min_super_sets_satrt_time)
-                                                   .count();
-            const size_t extra_k = base_entry_groups.size() / 5;
-            const SelectionMode current_mode = SelectionMode::SizeAndDistance;
-            const double beta_value = 1.0;
-            entry_group_ids = select_entry_groups(
-                base_entry_groups,
-                current_mode,
-                extra_k,
-                beta_value,
-                true_group_id);
-            stats.num_entry_points = entry_group_ids.size();
+            
+            
+            // 3. 应用决策结果
+            if (!is_ung_more_entry) {
+               static std::atomic<int> trie_debug_print_counter{0};
+               auto get_min_super_sets_satrt_time = std::chrono::high_resolution_clock::now();
+               get_min_super_sets_debug(query_labels, entry_group_ids, false, true,
+                                       trie_debug_print_counter, 
+                                       is_new_trie_method_decision, // <-- 使用模型的决策结果
+                                       is_rec_more_start, stats);
+               stats.get_min_super_sets_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - get_min_super_sets_satrt_time).count();
+               stats.num_entry_points = entry_group_ids.size();
+            } else {
+               IdxType true_group_id = 0;
+               if (id < true_query_group_ids.size()) { true_group_id = true_query_group_ids[id]; }
+               std::vector<IdxType> base_entry_groups;
+               static std::atomic<int> trie_debug_print_counter{0};
+               auto get_min_super_sets_satrt_time = std::chrono::high_resolution_clock::now();
+               get_min_super_sets_debug(query_labels, base_entry_groups, false, true,
+                                       trie_debug_print_counter, 
+                                       is_new_trie_method_decision, // <-- 使用模型的决策结果
+                                       is_rec_more_start, stats);
+               stats.get_min_super_sets_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - get_min_super_sets_satrt_time).count();
+               const size_t extra_k = base_entry_groups.size() / 5;
+               const SelectionMode current_mode = SelectionMode::SizeAndDistance;
+               const double beta_value = 1.0;
+               entry_group_ids = select_entry_groups(base_entry_groups, current_mode, extra_k, beta_value, true_group_id);
+               stats.num_entry_points = entry_group_ids.size();
+            }
          }
-         stats.get_group_entry_time_ms = std::chrono::duration<double, std::milli>(
-                                             std::chrono::high_resolution_clock::now() - get_entry_group_start_time)
-                                             .count();
+         else 
+         {
+            // --- 【路径 B: 使用原始 UNG 算法逻辑】 ---
+            // 传给 get_min_super_sets_debug 的 is_new_trie_method 参数固定为 false。
+            if (!is_ung_more_entry) {
+               static std::atomic<int> trie_debug_print_counter{0};
+               auto get_min_super_sets_satrt_time = std::chrono::high_resolution_clock::now();
+               get_min_super_sets_debug(query_labels, entry_group_ids, false, true,
+                                       trie_debug_print_counter, 
+                                       false, // <-- 固定为 false，执行原始的捷径法
+                                       false, stats);
+               stats.get_min_super_sets_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - get_min_super_sets_satrt_time).count();
+               stats.num_entry_points = entry_group_ids.size();
+            } else {
+               IdxType true_group_id = 0;
+               if (id < true_query_group_ids.size()) { true_group_id = true_query_group_ids[id]; }
+               std::vector<IdxType> base_entry_groups;
+               static std::atomic<int> trie_debug_print_counter{0};
+               auto get_min_super_sets_satrt_time = std::chrono::high_resolution_clock::now();
+               get_min_super_sets_debug(query_labels, base_entry_groups, false, true,
+                                       trie_debug_print_counter, 
+                                       false, // <-- 固定为 false，执行原始的捷径法
+                                       false, stats);
+               stats.get_min_super_sets_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - get_min_super_sets_satrt_time).count();
+               const size_t extra_k = base_entry_groups.size() / 5;
+               const SelectionMode current_mode = SelectionMode::SizeAndDistance;
+               const double beta_value = 1.0;
+               entry_group_ids = select_entry_groups(base_entry_groups, current_mode, extra_k, beta_value, true_group_id);
+               stats.num_entry_points = entry_group_ids.size();
+            }
+         }
+         
+         stats.get_group_entry_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - get_entry_group_start_time).count();
+         // ======================= idea1 selector end =======================
 
          // idea:计算flag
          auto flag_start_time = std::chrono::high_resolution_clock::now();
@@ -2869,7 +2935,7 @@ namespace ANNS
       std::cout << "- Index saved in " << std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count() << " ms" << std::endl;
    }
 
-   void UniNavGraph::load(std::string index_path_prefix, const std::string &data_type)
+   void UniNavGraph::load(std::string index_path_prefix, std::string selector_modle_prefix,const std::string &data_type)
    {
       std::cout << "Loading index from " << index_path_prefix << " ..." << std::endl;
       auto start_time = std::chrono::high_resolution_clock::now();
@@ -2910,6 +2976,10 @@ namespace ANNS
       // load trie index
       std::string trie_filename = index_path_prefix + "trie";
       _trie_index.load(trie_filename);
+      // --- 预计算并缓存 Trie 静态指标 ---
+      std::cout << "Pre-calculating and caching Trie static metrics..." << std::endl;
+      _trie_static_metrics = _trie_index.calculate_static_metrics();
+      std::cout << "- Caching complete." << std::endl;
 
       // load graph data
       std::string graph_filename = index_path_prefix + "graph";
@@ -2965,9 +3035,25 @@ namespace ANNS
       std::string covered_sets_rb_filename = index_path_prefix + "covered_sets_rb.bin";
       load_roaring_vector(covered_sets_rb_filename, _covered_sets_rb);
       std::cout << "_covered_sets_rb loaded." << std::endl;
-
       std::cout << " _label_nav_graph->out_neighbors.size() = " << _label_nav_graph->out_neighbors.size() << std::endl;
       std::cout << " _num_groups = " << _num_groups << std::endl;
+
+      //load idea1 selector
+      std::string model_path = selector_modle_prefix + "trie_method_selector.onnx";
+      std::cout << "Loading Trie method selector model from " << model_path << " ..." << std::endl;
+      try {
+         if (fs::exists(model_path)) {
+               _trie_method_selector = std::make_unique<TrieMethodSelector>(model_path);
+               std::cout << "- Model loaded successfully." << std::endl;
+         } else {
+               std::cerr << "- WARNING: Model file not found. Will use default method passed by command line." << std::endl;
+               _trie_method_selector = nullptr;
+         }
+      } catch (const std::exception& e) {
+         std::cerr << "- ERROR: Failed to load model: " << e.what() << ". Will use default method." << std::endl;
+         _trie_method_selector = nullptr;
+      }
+
       // print
       std::cout << "- Index loaded in " << std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count() << " ms" << std::endl;
    }

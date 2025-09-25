@@ -7,6 +7,9 @@
 #include "search_cache.h"
 #include "label_nav_graph.h"
 #include "vamana/vamana.h"
+#include "TrieMethodSelector.h"
+#include "../../faiss/IndexACORN.h"
+#include "../../faiss/index_io.h"
 #include <unordered_map>
 #include <bitset>
 #include <boost/dynamic_bitset.hpp>
@@ -26,6 +29,7 @@ namespace ANNS
       double coverage_merge_time_ms;     // coverage合并耗时
       double get_min_super_sets_time_ms; // 获取最小入口集合耗时
       double get_group_entry_time_ms;    // 计算入口点耗时
+      double idea1_flag_time_ms;      // idea1计算flag耗时
       double entry_group_total_coverage;
       size_t num_distance_calcs;
       size_t num_entry_points;
@@ -111,7 +115,7 @@ namespace ANNS
 
       // I/O
       void save(std::string index_path_prefix, std::string results_path_prefix);
-      void load(std::string index_path_prefix, const std::string &data_type);
+      void load(std::string index_path_prefix, std::string selector_modle_prefix,const std::string &data_type);
 
       // query generator
 
@@ -332,6 +336,14 @@ namespace ANNS
       double _cross_edge_step3_add_dist_edges_time_ms;      // 步骤3 (添加距离驱动边) 的耗时
       double _cross_edge_step4_add_hierarchy_edges_time_ms; // 步骤4 (添加层级保障边) 的耗时
       void statistics();
+
+      // idea1 selector
+      std::unique_ptr<TrieMethodSelector> _trie_method_selector;
+      TrieStaticMetrics _trie_static_metrics;// 用于缓存 Trie 树的静态指标，避免重复计算
+
+      // idea2 selector
+      std::shared_ptr<faiss::IndexACORNFlat> _acorn_index;
+
    };
 }
 

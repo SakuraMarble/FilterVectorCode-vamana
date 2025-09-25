@@ -12,10 +12,10 @@
 class TrieMethodSelector {
 public:
     // 构造函数：加载 ONNX 模型并初始化推理会话
-    // 参数: model_path - 我们之前导出的 "trie_method_selector.onnx" 文件的路径
+    // 参数: model_path - 之前导出的 "trie_method_selector.onnx" 文件的路径
     TrieMethodSelector(const std::string& model_path);
 
-    // 预测函数：根据输入的特征，返回 true (代表应使用新方法) 或 false (使用旧方法)
+    // 预测函数：根据输入的特征，返回 true (代表应使用新方法) 或 false
     // 参数: features - 一个包含所有输入特征的浮点数向量
     bool predict(const std::vector<float>& features);
 
