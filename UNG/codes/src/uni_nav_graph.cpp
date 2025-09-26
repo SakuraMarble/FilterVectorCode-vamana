@@ -2270,7 +2270,10 @@ namespace ANNS
                                    std::vector<std::bitset<10000001>> &bitmaps,
                                    bool is_ori_ung,
                                    bool is_new_trie_method, bool is_rec_more_start,
-                                   bool is_ung_more_entry, const std::vector<IdxType> &true_query_group_ids)
+                                   bool is_ung_more_entry, 
+                                   int lsearch_start, int lsearch_step,
+                                   int efs_start, int efs_step,
+                                   const std::vector<IdxType> &true_query_group_ids)
    {
       auto num_queries = query_storage->get_num_points();
       _query_storage = query_storage;
@@ -2471,10 +2474,12 @@ namespace ANNS
 
          if (is_ori_ung)
             use_global_search = false;
+
+         use_global_search = true;
          stats.is_global_search = use_global_search;
 
          // 4. 执行搜索
-         if (use_global_search)
+         /*if (use_global_search)
          {
             // 4.1 全局图搜索模式
             search_cache->visited_set.clear();
@@ -2531,6 +2536,61 @@ namespace ANNS
                   valid_count++;
                }
             }
+         }*/
+         if (use_global_search)
+         {
+               // === ACORN集成 === 
+               stats.is_global_search = true; 
+
+               if (!_acorn_index) {
+                  std::cerr << "Warning: ACORN index not loaded for query " << id 
+                           << ". Skipping." << std::endl;
+                  for (auto k = 0; k < K; ++k) results[id * K + k].first = -1;
+                  continue;
+               }
+
+               // auto acorn_call_start_time = std::chrono::high_resolution_clock::now();
+
+               // 1. 根据 Lsearch 动态计算 efs
+               int current_efs = efs_start + ((Lsearch - lsearch_start) / lsearch_step) * efs_step;
+               stats.acorn_efs_used = current_efs;
+
+               // 2. 利用预计算的 bitmaps 和 ID映射表 来正确生成 filter_map
+               std::vector<char> filter_map(_num_points);
+               const auto& current_bitmap = bitmaps[id];
+               for (IdxType new_id = 0; new_id < _num_points; ++new_id) {
+                  IdxType original_id = _new_to_old_vec_ids[new_id];
+                  filter_map[original_id] = current_bitmap[new_id] ? 1 : 0;// 在 filter_map 的 original_id 位置，填入 new_id 对应的过滤结果
+               }
+
+               // 3. 准备其他ACORN搜索参数
+               const float* query_vector_float = reinterpret_cast<const float*>(query);
+               _acorn_index->acorn.efSearch = current_efs;
+
+               // 4. 准备结果容器并执行ACORN搜索
+               std::vector<faiss::idx_t> result_original_ids(K); // 变量名清晰化，表示这是原始ID
+               std::vector<float> result_dists(K);
+               
+               _acorn_index->search(1, query_vector_float, K, result_dists.data(), result_original_ids.data(), filter_map.data(), nullptr, nullptr, nullptr, true);
+
+               // 5. 将ACORN返回的 original_id 转换为 UNG 的 new_id
+               cur_result.clear();
+               for (size_t i = 0; i < K; ++i) {
+                  faiss::idx_t original_id = result_original_ids[i];
+                  if (original_id != -1) {
+                     // 使用反向映射表找到对应的 new_id
+                     IdxType new_id = _old_to_new_vec_ids[original_id];
+                     // 将转换后的 new_id 插入结果队列
+                     cur_result.insert(new_id, result_dists[i]);
+                  }
+               }
+
+               // 统计距离计算次数
+               num_cmps[id] = 0; 
+
+               // stats.acorn_search_time_ms = std::chrono::duration<double, std::milli>(
+               //                      std::chrono::high_resolution_clock::now() - acorn_call_start_time)
+               //                      .count();
          }
          else
          {
@@ -2935,7 +2995,7 @@ namespace ANNS
       std::cout << "- Index saved in " << std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count() << " ms" << std::endl;
    }
 
-   void UniNavGraph::load(std::string index_path_prefix, std::string selector_modle_prefix,const std::string &data_type)
+   void UniNavGraph::load(std::string index_path_prefix,std::string selector_modle_prefix,const std::string &data_type, const std::string &acorn_index_path)
    {
       std::cout << "Loading index from " << index_path_prefix << " ..." << std::endl;
       auto start_time = std::chrono::high_resolution_clock::now();
@@ -2972,6 +3032,15 @@ namespace ANNS
       // load new to old vec ids
       std::string new_to_old_vec_ids_filename = index_path_prefix + "new_to_old_vec_ids";
       load_1d_vector(new_to_old_vec_ids_filename, _new_to_old_vec_ids);
+
+      // fxy_add: load old to new vec ids
+      std::cout << "- Building reverse ID map (original_id -> new_id)..." << std::endl;
+      _old_to_new_vec_ids.resize(_num_points);
+      for (IdxType new_id = 0; new_id < _num_points; ++new_id) {
+         IdxType old_id = _new_to_old_vec_ids[new_id];
+         _old_to_new_vec_ids[old_id] = new_id;
+      }
+      std::cout << "- Reverse ID map built successfully." << std::endl;
 
       // load trie index
       std::string trie_filename = index_path_prefix + "trie";
@@ -3053,6 +3122,45 @@ namespace ANNS
          std::cerr << "- ERROR: Failed to load model: " << e.what() << ". Will use default method." << std::endl;
          _trie_method_selector = nullptr;
       }
+
+      // === 新增逻辑：加载ACORN索引 === 
+      if (!acorn_index_path.empty() && fs::exists(acorn_index_path)) {
+            std::cout << "Loading ACORN index from " << acorn_index_path << " ..." << std::endl;
+            try {
+               // 1. 使用Faiss的IO函数读取原始索引
+               faiss::Index* raw_index = faiss::read_index(acorn_index_path.c_str());
+               
+               // 2. 安全地将通用指针转换为ACORN专用指针
+               _acorn_index = std::shared_ptr<faiss::IndexACORNFlat>(dynamic_cast<faiss::IndexACORNFlat*>(raw_index));
+               
+               if (_acorn_index) {
+                  // 3. 重新关联元数据(标签)，这是ACORN正确工作的关键步骤
+                  std::cout << "- Re-associating metadata with ACORN index..." << std::endl;
+                  std::vector<std::vector<int>> metadata(_num_points);
+
+                  // 从UNG的基础存储中提取标签，构建ACORN需要的元数据格式
+                  for(size_t i = 0; i < _num_points; ++i) {
+                        const auto& label_set = _base_storage->get_label_set(i);
+                        // ACORN需要int类型的标签，并且需要排序
+                        metadata[i].assign(label_set.begin(), label_set.end());
+                        std::sort(metadata[i].begin(), metadata[i].end());
+                  }
+                  // 将构建好的元数据设置到ACORN索引实例中
+                  _acorn_index->set_metadata(metadata);
+                  
+                  std::cout << "- ACORN index loaded and metadata associated successfully." << std::endl;
+               } else {
+                  std::cerr << "ERROR: Failed to cast loaded index to faiss::IndexACORNFlat. Is the index file correct?" << std::endl;
+                  delete raw_index; // 防止因转换失败导致的内存泄漏
+               }
+            } catch (const std::exception& e) {
+               std::cerr << "ERROR: Exception caught while loading ACORN index: " << e.what() << std::endl;
+               _acorn_index = nullptr; // 确保加载失败时指针为空
+            }
+      } else if (!acorn_index_path.empty()) {
+            std::cerr << "Warning: ACORN index path provided, but file not found at: " << acorn_index_path << std::endl;
+      }
+      // +++ === ACORN索引加载逻辑结束 === +++
 
       // print
       std::cout << "- Index loaded in " << std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count() << " ms" << std::endl;

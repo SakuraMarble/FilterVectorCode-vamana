@@ -6,6 +6,12 @@ set(CMAKE_STANDARD 17)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# 将 ACORN/faiss 项目作为 UNG 项目的一个子目录添加进来,这样 UNG 就能找到 faiss 定义的所有目标 (targets);第二个参数指定了构建输出目录，避免污染 faiss 的源文件目录
+set(FAISS_ENABLE_GPU OFF CACHE BOOL "Disable Faiss GPU support")
+set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "Disable Faiss Python bindings")
+set(BUILD_TESTING OFF CACHE BOOL "Disable Faiss tests")
+add_subdirectory(../../ACORN ${CMAKE_BINARY_DIR}/acorn_build)
+
 # Boost
 # set(Boost_INCLUDEDIRS "specify if needed")
 # set(Boost_ROOT "specify if needed")

@@ -131,7 +131,7 @@ int main(int argc, char **argv)
 
    // load index
    ANNS::UniNavGraph index(query_storage->get_num_points());
-   index.load(index_path_prefix, selector_modle_prefix, data_type);
+   index.load(index_path_prefix, selector_modle_prefix, data_type, "/data/fxy/FilterVector/FilterVectorResults/parall/parall_build/celeba/query_7/UNG_M32_LB100_A1.2_CE6_ACORN_M32_G80/acorn_index_files/acorn.index");
    index.load_bipartite_graph(index_path_prefix + "vector_attr_graph");
 
    // 加载查询来源组ID文件
@@ -210,7 +210,7 @@ int main(int argc, char **argv)
          else
          {
              index.search_hybrid(query_storage, distance_handler, num_threads, current_Lsearch,
-                                 num_entry_points, scenario, K, results, num_cmps, query_stats[repeat][LsearchId], bitmap, is_ori_ung, is_new_trie_method, is_rec_more_start, is_ung_more_entry, true_query_group_ids);
+                                 num_entry_points, scenario, K, results, num_cmps, query_stats[repeat][LsearchId], bitmap, is_ori_ung, is_new_trie_method, is_rec_more_start, is_ung_more_entry, 1000,1000,10,5,true_query_group_ids);
          }
          auto time_cost = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
 

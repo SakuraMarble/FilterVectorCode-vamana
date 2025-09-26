@@ -8,8 +8,8 @@
 #include "label_nav_graph.h"
 #include "vamana/vamana.h"
 #include "TrieMethodSelector.h"
-#include "../../faiss/IndexACORN.h"
-#include "../../faiss/index_io.h"
+#include "../../../ACORN/faiss/IndexACORN.h"
+#include "../../../ACORN/faiss/index_io.h"
 #include <unordered_map>
 #include <bitset>
 #include <boost/dynamic_bitset.hpp>
@@ -35,6 +35,7 @@ namespace ANNS
       size_t num_entry_points;
       size_t num_lng_descendants;
       bool is_global_search;
+      int acorn_efs_used;
 
       size_t num_nodes_visited = 0; // 用于存储search过程中的节点总数
 
@@ -111,11 +112,14 @@ namespace ANNS
                          std::vector<std::bitset<10000001>> &bitmaps,
                          bool is_ori_ung,
                          bool is_select_entry_groups, bool is_rec_more_start,
-                         bool is_ung_more_entry, const std::vector<IdxType> &true_query_group_ids = {}); // 包含每个查询其真实来源组ID的向量
+                         bool is_ung_more_entry, 
+                         int lsearch_start, int lsearch_step,
+                         int efs_start, int efs_step,
+                         const std::vector<IdxType> &true_query_group_ids = {}); // 包含每个查询其真实来源组ID的向量
 
       // I/O
       void save(std::string index_path_prefix, std::string results_path_prefix);
-      void load(std::string index_path_prefix, std::string selector_modle_prefix,const std::string &data_type);
+      void load(std::string index_path_prefix, std::string selector_modle_prefix, const std::string &data_type, const std::string &acorn_index_path);
 
       // query generator
 
@@ -249,6 +253,7 @@ namespace ANNS
 
       // prepare vector storage for each group
       std::vector<IdxType> _new_to_old_vec_ids;
+      std::vector<IdxType> _old_to_new_vec_ids;//fxy_add
       std::vector<std::pair<IdxType, IdxType>> _group_id_to_range;
       std::vector<std::shared_ptr<IStorage>> _group_storages;
       void prepare_group_storages_graphs();
