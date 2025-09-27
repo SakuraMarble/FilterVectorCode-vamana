@@ -218,7 +218,7 @@ void get_index_name(
  *******************************************************/
 const int debugFlag = 1;
 
-void debugTime()
+inline void debugTime()
 {
    if (debugFlag)
    {
@@ -255,7 +255,7 @@ void debugTime()
       }                                          \
    } while (0)
 
-double elapsed()
+inline double elapsed()
 {
    struct timeval tv;
    gettimeofday(&tv, NULL);
@@ -1550,3 +1550,198 @@ std::vector<float> compute_recall(
 
    return recalls;
 }
+
+// ============================filter map begin============================
+
+// fxy_add: 构建倒排索引并保存到二进制文件，相当于UNG中_vector_attr_graph
+void build_and_save_inverted_index(
+   const std::vector<std::vector<int>>& metadata,
+   size_t N,
+   const std::string& output_path)
+{
+   printf("[%.3f s] Starting to build inverted index...\n", elapsed());
+
+   // 1. 构建倒排索引 (内存中)
+   std::unordered_map<int, std::vector<int>> inverted_index;
+   for (int xb_idx = 0; xb_idx < N; ++xb_idx) {
+       for (int attr : metadata[xb_idx]) {
+           inverted_index[attr].push_back(xb_idx);
+       }
+   }
+   printf("[%.3f s] Inverted index built in memory. Found %zu unique attributes.\n", elapsed(), inverted_index.size());
+
+   // 2. 将索引写入二进制文件
+   std::ofstream out(output_path, std::ios::binary);
+   if (!out) {
+       fprintf(stderr, "Error: Cannot open file for writing inverted index: %s\n", output_path.c_str());
+       exit(1);
+   }
+
+   // 写入文件头：属性总数
+   uint64_t map_size = inverted_index.size();
+   out.write(reinterpret_cast<const char*>(&map_size), sizeof(map_size));
+
+   // 依次写入每个属性及其向量列表
+   for (const auto& pair : inverted_index) {
+       int attr_id = pair.first;
+       const auto& vec_list = pair.second;
+       uint64_t list_size = vec_list.size();
+
+       // 写入属性ID
+       out.write(reinterpret_cast<const char*>(&attr_id), sizeof(attr_id));
+       // 写入列表长度
+       out.write(reinterpret_cast<const char*>(&list_size), sizeof(list_size));
+       // 写入列表内容
+       out.write(reinterpret_cast<const char*>(vec_list.data()), list_size * sizeof(int));
+   }
+
+   out.close();
+   printf("[%.3f s] Inverted index successfully saved to: %s\n", elapsed(), output_path.c_str());
+}
+
+// fxy_add: 从二进制文件加载倒排索引
+std::unordered_map<int, std::vector<int>> load_inverted_index(const std::string& input_path) {
+    std::ifstream in(input_path, std::ios::binary);
+    if (!in) {
+        fprintf(stderr, "Error: Cannot open file for reading inverted index: %s\n", input_path.c_str());
+        exit(1);
+    }
+
+    std::unordered_map<int, std::vector<int>> inverted_index;
+    
+    // 读取文件头：属性总数
+    uint64_t map_size;
+    in.read(reinterpret_cast<char*>(&map_size), sizeof(map_size));
+    inverted_index.reserve(map_size);
+
+    // 依次读取每个属性及其向量列表
+    for (uint64_t i = 0; i < map_size; ++i) {
+        int attr_id;
+        uint64_t list_size;
+
+        in.read(reinterpret_cast<char*>(&attr_id), sizeof(attr_id));
+        in.read(reinterpret_cast<char*>(&list_size), sizeof(list_size));
+        
+        std::vector<int> vec_list(list_size);
+        in.read(reinterpret_cast<char*>(vec_list.data()), list_size * sizeof(int));
+        
+        inverted_index[attr_id] = std::move(vec_list);
+    }
+    
+    in.close();
+    printf("Inverted index loaded successfully.\n");
+    return inverted_index;
+}
+
+// fxy_add: 根据倒排索引生成filter_map
+std::vector<char> generate_filter_map_from_index(
+   const std::unordered_map<int, std::vector<int>>& inverted_index,
+   size_t nq,
+   size_t N,
+   const std::vector<std::vector<int>>& aq)
+{
+   std::vector<char> filter_map(nq * N, 0);
+
+   #pragma omp parallel
+   {
+       // 每个线程拥有自己的私有计数器和追踪列表，避免线程间数据竞争
+       std::vector<int> query_counters(N, 0);
+       std::vector<int> touched_indices;
+       // 预分配一些空间以减少循环中的内存重分配
+       touched_indices.reserve(1024); 
+
+       #pragma omp for
+       for (int xq_idx = 0; xq_idx < nq; ++xq_idx) {
+           const auto& query_attrs = aq[xq_idx];
+           size_t query_attr_count = query_attrs.size();
+
+           if (query_attr_count == 0) {
+               continue;
+           }
+
+           bool possible = true;
+           for (int attr : query_attrs) {
+               if (inverted_index.count(attr)) {
+                   for (int xb_idx : inverted_index.at(attr)) {
+                       // 只有当第一次为一个向量计数时，才记录其索引
+                       if (query_counters[xb_idx] == 0) {
+                           touched_indices.push_back(xb_idx);
+                       }
+                       query_counters[xb_idx]++;
+                   }
+               } else {
+                   possible = false;
+                   break;
+               }
+           }
+           
+           if (possible) {
+               // 遍历规模小得多的 touched_indices 列表，而不是整个 query_counters
+               for (int xb_idx : touched_indices) {
+                   if (query_counters[xb_idx] == query_attr_count) {
+                       filter_map[xq_idx * N + xb_idx] = 1;
+                   }
+               }
+           }
+
+           // 关键：高效重置计数器，为本线程的下一个查询做准备
+           for (int xb_idx : touched_indices) {
+               query_counters[xb_idx] = 0;
+           }
+           touched_indices.clear();
+       }
+   } // end of parallel region
+
+   return filter_map;
+}
+
+// fxy_add: 为单个查询根据倒排索引生成filter_map,在 search 循环内被单个线程调用而设计
+std::vector<char> generate_single_filter_map(
+   const std::unordered_map<int, std::vector<int>>& inverted_index, 
+   size_t N,                            
+   const std::vector<int>& query_attrs) 
+{
+   std::vector<char> filter_map(N, 0);
+   size_t query_attr_count = query_attrs.size();
+
+   if (query_attr_count == 0) {
+      return filter_map; // 当前返回全0，表示无结果
+   }
+
+   // 使用一个临时计数器来追踪每个数据库向量匹配了多少个查询属性
+   std::vector<int> match_counters(N, 0);
+   // 只记录被接触过的向量索引，避免每次都重置整个N大小的数组
+   std::vector<int> touched_indices;
+   touched_indices.reserve(1024); // 预分配以提高效率
+
+   bool is_possible = true;
+   for (int attr : query_attrs) {
+      auto it = inverted_index.find(attr);
+      if (it != inverted_index.end()) {
+         // 找到了这个属性对应的向量列表
+         for (int xb_idx : it->second) {
+            if (match_counters[xb_idx] == 0) {
+                touched_indices.push_back(xb_idx);
+            }
+            match_counters[xb_idx]++;
+         }
+      } else {
+         // 如果查询的某个必需属性在数据库中不存在，则不可能有任何匹配项
+         is_possible = false;
+         break;
+      }
+   }
+   
+   if (is_possible) {
+      // 遍历被接触过的向量，检查哪些完全匹配
+      for (int xb_idx : touched_indices) {
+         if (match_counters[xb_idx] == query_attr_count) {
+            filter_map[xb_idx] = 1;
+         }
+      }
+   }
+   // 这个函数执行完后，局部变量 match_counters 和 touched_indices 会被自动销毁，无需手动重置，天然线程安全。
+   return filter_map;
+}
+
+// ============================filter map end============================

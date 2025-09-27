@@ -1023,6 +1023,68 @@ namespace ANNS
       return {bitmap, per_query_bitmap_time};
    }
 
+   // fxy_add: 通过分组ID计算bitmap
+   roaring::Roaring UniNavGraph::compute_bitmap_from_groups(const std::vector<IdxType>& group_ids) const
+   {
+      roaring::Roaring final_bitmap;
+      for (IdxType group_id : group_ids)
+      {
+         // 确保group_id有效
+         if (group_id > 0 && group_id <= _num_groups)
+         {
+               // 对每个分组的覆盖集（_covered_sets_rb）执行并集操作
+               final_bitmap |= _covered_sets_rb[group_id];
+         }
+      }
+      return final_bitmap;
+   }
+   
+   // fxy_add: 批量计算UNG过滤的bitmaps
+   std::vector<roaring::Roaring> UniNavGraph::batch_compute_ung_bitmaps(
+      const ANNS::UniNavGraph& index,
+      const std::shared_ptr<ANNS::IStorage>& query_storage,
+      uint32_t num_threads,
+      bool is_new_trie_method,
+      bool is_rec_more_start) 
+   {
+      auto num_queries = query_storage->get_num_points();
+      std::vector<roaring::Roaring> all_bitmaps(num_queries);
+  
+      // omp_set_num_threads(num_threads);
+      #pragma omp parallel
+      {
+          // 为每个线程创建一个独立的原子计数器，避免在循环中重复创建. static 确保了多线程环境下只有一个实例
+          static std::atomic<int> trie_debug_print_counter{0};
+  
+          #pragma omp for
+          for (int id = 0; id < num_queries; ++id) {
+              // 1. 获取当前查询的标签
+              const auto& query_labels = query_storage->get_label_set(id);
+  
+              // 2. 获取最小超集分组
+              std::vector<ANNS::IdxType> entry_group_ids;
+              
+              // 为 get_min_super_sets_debug 创建一个临时的、仅在此作用域有效的 stats 对象
+              ANNS::QueryStats dummy_stats;
+  
+              const_cast<ANNS::UniNavGraph&>(index).get_min_super_sets_debug(
+                  query_labels, 
+                  entry_group_ids, 
+                  false, true, // avoid_self=false, need_containment=true 是通常的默认值
+                  trie_debug_print_counter,
+                  is_new_trie_method,
+                  is_rec_more_start,
+                  dummy_stats
+              );
+
+              // 3. 利用分组ID高效计算bitmap 
+              all_bitmaps[id] = index.compute_bitmap_from_groups(entry_group_ids);
+          }
+      }
+      return all_bitmaps;
+   }
+  
+
    //====================================end 查询过程：计算bitmap=========================================
    void UniNavGraph::build_complete_graph(std::shared_ptr<Graph> graph, IdxType num_points)
    {
@@ -1986,7 +2048,6 @@ namespace ANNS
    }
 
    // fxy_add:初始化求flag的几个数据结构
-
    void UniNavGraph::initialize_roaring_bitsets()
    {
       std::cout << "enter initialize_roaring_bitsets" << std::endl;
@@ -2267,7 +2328,6 @@ namespace ANNS
                                    IdxType K, std::pair<IdxType, float> *results,
                                    std::vector<float> &num_cmps,
                                    std::vector<QueryStats> &query_stats,
-                                   std::vector<std::bitset<10000001>> &bitmaps,
                                    bool is_ori_ung,
                                    bool is_new_trie_method, bool is_rec_more_start,
                                    bool is_ung_more_entry, 
@@ -2555,13 +2615,20 @@ namespace ANNS
                int current_efs = efs_start + ((Lsearch - lsearch_start) / lsearch_step) * efs_step;
                stats.acorn_efs_used = current_efs;
 
-               // 2. 利用预计算的 bitmaps 和 ID映射表 来正确生成 filter_map
-               std::vector<char> filter_map(_num_points);
-               const auto& current_bitmap = bitmaps[id];
-               for (IdxType new_id = 0; new_id < _num_points; ++new_id) {
-                  IdxType original_id = _new_to_old_vec_ids[new_id];
-                  filter_map[original_id] = current_bitmap[new_id] ? 1 : 0;// 在 filter_map 的 original_id 位置，填入 new_id 对应的过滤结果
+               roaring::Roaring current_roaring_bitmap = compute_bitmap_from_groups(entry_group_ids);
+
+               auto bitmap_start_time = std::chrono::high_resolution_clock::now();
+               // 2. 利用实时计算出的bitmap来生成filter_map
+               std::vector<char> filter_map(_num_points, 0);
+               for (uint32_t original_id : current_roaring_bitmap) 
+               {
+                  if (original_id < _num_points) {
+                        filter_map[original_id] = 1;
+                  }
                }
+               stats.bitmap_time_ms = std::chrono::duration<double, std::milli>(
+                                             std::chrono::high_resolution_clock::now() - bitmap_start_time)
+                                             .count();
 
                // 3. 准备其他ACORN搜索参数
                const float* query_vector_float = reinterpret_cast<const float*>(query);

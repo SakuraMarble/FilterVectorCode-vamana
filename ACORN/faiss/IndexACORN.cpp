@@ -38,6 +38,7 @@
 #include <stdio.h>
 #include <sys/time.h>
 #include <iostream>
+#include "../demos/utils.cpp"
 
 extern "C"
 {
@@ -349,6 +350,11 @@ namespace faiss
       }
    }
 
+   // fxy_add
+   void IndexACORN::set_inverted_index(const std::unordered_map<int, std::vector<int>>& index) {
+      this->inverted_index = index;
+   }
+
    void IndexACORN::train(idx_t n, const float *x)
    {
       FAISS_THROW_IF_NOT_MSG(
@@ -359,14 +365,15 @@ namespace faiss
       is_trained = true;
    }
 
-   // overloaded search for hybrid search
+   // fxy_add: 在search中实时计算filter map
    void IndexACORN::search(
        idx_t n,
        const float *x,
        idx_t k,
        float *distances,
        idx_t *labels,
-       char *filter_id_map,
+      //  char *filter_id_map,
+       const std::vector<std::vector<int>>& aq, 
        std::vector<double> *query_times, // 记录每个查询耗时（毫秒/秒）
        std::vector<double> *query_qps,   // 记录每个查询QPS
        std::vector<size_t> *query_n3,    // 记录每个查询的n3
@@ -411,7 +418,11 @@ namespace faiss
                double t_start = omp_get_wtime(); // 记录开始时间
                idx_t *idxi = labels + i * k;
                float *simi = distances + i * k;
-               char *filters = filter_id_map + i * ntotal;
+               // char *filters = filter_id_map + i * ntotal;
+               // 为当前查询 i 实时生成 filter map
+               std::vector<char> single_filter_map = generate_single_filter_map(
+                  this->inverted_index, this->ntotal, aq[i]
+               );
                dis->set_query(x + i * d);
 
                maxheap_heapify(k, simi, idxi);
@@ -423,7 +434,7 @@ namespace faiss
                    idxi,
                    simi,
                    vt,
-                   filters,
+                   single_filter_map.data(),
                    if_bfs_filter,
                    params); // TODO edit to hybrid search
                // std::cout << "end hybrid search" << std::endl;
@@ -477,6 +488,127 @@ namespace faiss
            skips,
            visits}); // added for profiling
    }
+
+   // fxy_add: 直接传入filter_id_map，在UNG中调用
+   void IndexACORN::search(
+      idx_t n,
+      const float *x,
+      idx_t k,
+      float *distances,
+      idx_t *labels,
+      char *filter_id_map,
+      std::vector<double> *query_times, // 记录每个查询耗时（毫秒/秒）
+      std::vector<double> *query_qps,   // 记录每个查询QPS
+      std::vector<size_t> *query_n3,    // 记录每个查询的n3
+      bool if_bfs_filter,
+      const SearchParameters *params_in) const
+   {
+
+     FAISS_THROW_IF_NOT(k > 0);
+     FAISS_THROW_IF_NOT_MSG(
+         storage,
+         "Please use IndexACORNFlat (or variants) instead of IndexACORN directly");
+     const SearchParametersACORN *params = nullptr;
+
+     int efSearch = acorn.efSearch;
+     if (params_in)
+     {
+        params = dynamic_cast<const SearchParametersACORN *>(params_in);
+        FAISS_THROW_IF_NOT_MSG(params, "params type invalid");
+        efSearch = params->efSearch;
+     }
+     size_t n1 = 0, n2 = 0, n3 = 0, ndis = 0, nreorder = 0;
+     double candidates_loop = 0, neighbors_loop = 0, tuple_unwrap = 0, skips = 0,
+            visits = 0; // added for profiling
+
+     idx_t check_period =
+         InterruptCallback::get_period_hint(acorn.max_level * d * efSearch);
+
+     for (idx_t i0 = 0; i0 < n; i0 += check_period)
+     {
+        idx_t i1 = std::min(i0 + check_period, n);
+
+#pragma omp parallel
+        {
+           VisitedTable vt(ntotal);
+
+           DistanceComputer *dis = storage_distance_computer(storage);
+           ScopeDeleter1<DistanceComputer> del(dis);
+
+#pragma omp for reduction(+ : n1, n2, n3, ndis, nreorder, candidates_loop)
+           for (idx_t i = i0; i < i1; i++)
+           {
+              double t_start = omp_get_wtime(); // 记录开始时间
+              idx_t *idxi = labels + i * k;
+              float *simi = distances + i * k;
+              char *filters = filter_id_map + i * ntotal;
+              dis->set_query(x + i * d);
+
+              maxheap_heapify(k, simi, idxi);
+
+              // std::cout << "begin hybrid search" << std::endl;
+              ACORNStats stats = acorn.hybrid_search(
+                  *dis,
+                  k,
+                  idxi,
+                  simi,
+                  vt,
+                  filters,
+                  if_bfs_filter,
+                  params); // TODO edit to hybrid search
+              // std::cout << "end hybrid search" << std::endl;
+
+              // ACORNStats stats = acorn.hybrid_search(*dis, k, idxi, simi,
+              // vt, filters[i], op, regex, params); //TODO edit to hybrid
+              // search
+              n1 += stats.n1;
+              n2 += stats.n2;
+              n3 += stats.n3;
+              ndis += stats.ndis;
+              nreorder += stats.nreorder;
+              candidates_loop += stats.candidates_loop;
+              neighbors_loop += stats.neighbors_loop;
+              tuple_unwrap += stats.tuple_unwrap;
+              skips += stats.skips;
+              visits += stats.visits;
+              maxheap_reorder(k, simi, idxi);
+              double t_end = omp_get_wtime();
+              double elapsed = t_end - t_start;
+
+              if (query_times)
+                 query_times->at(i) = elapsed;
+              if (query_qps)
+                 query_qps->at(i) = 1.0 / elapsed; // QPS = 1/耗时
+              if (query_n3)
+                 query_n3->at(i) = stats.n3; // 新增
+           }
+        }
+        InterruptCallback::check();
+     }
+
+     if (metric_type == METRIC_INNER_PRODUCT)
+     {
+        // we need to revert the negated distances
+        for (size_t i = 0; i < k * n; i++)
+        {
+           distances[i] = -distances[i];
+        }
+     }
+
+     acorn_stats.combine(
+         {n1,
+          n2,
+          n3,
+          ndis,
+          nreorder,
+          candidates_loop,
+          neighbors_loop,
+          tuple_unwrap,
+          skips,
+          visits}); // added for profiling
+   }
+
+
 
    // TODO figure out what do with this
    void IndexACORN::search(

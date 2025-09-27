@@ -24,7 +24,6 @@
 
 namespace faiss
 {
-
    struct IndexACORN;
 
    /** The ACORN index is a normal random-access index with a ACORN
@@ -40,6 +39,9 @@ namespace faiss
       // the sequential storage
       bool own_fields;
       Index *storage;
+
+      std::unordered_map<int, std::vector<int>> inverted_index;// 存储倒排索引
+      void set_inverted_index(const std::unordered_map<int, std::vector<int>>& index);
 
       //     ReconstructFromNeighbors* reconstruct_from_neighbors;
 
@@ -98,12 +100,27 @@ namespace faiss
           idx_t k,
           float *distances,
           idx_t *labels,
-          char *filter_id_map,
+         //  char *filter_id_map,
+         const std::vector<std::vector<int>>& aq,
           std::vector<double> *query_times, // 记录每个查询耗时（毫秒/秒）
           std::vector<double> *query_qps,   // 记录每个查询QPS
           std::vector<size_t> *query_n3,    // 记录每个查询的n3
           bool if_bfs_filter,
           const SearchParameters *params = nullptr) const;
+
+
+      void search(
+            idx_t n,
+            const float *x,
+            idx_t k,
+            float *distances,
+            idx_t *labels,
+            char *filter_id_map,
+            std::vector<double> *query_times, // 记录每个查询耗时（毫秒/秒）
+            std::vector<double> *query_qps,   // 记录每个查询QPS
+            std::vector<size_t> *query_n3,    // 记录每个查询的n3
+            bool if_bfs_filter,
+            const SearchParameters *params = nullptr) const;
 
       void calculate_distances(
           idx_t nq,             // 查询的数量

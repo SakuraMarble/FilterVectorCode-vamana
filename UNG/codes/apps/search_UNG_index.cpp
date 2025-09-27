@@ -159,18 +159,66 @@ int main(int argc, char **argv)
    ANNS::load_gt_file(gt_file, gt, num_queries, K);
    auto results = new std::pair<ANNS::IdxType, float>[num_queries * K];
 
-   // compute attribute bitmap
-   std::vector<std::pair<std::bitset<10000001>, double>> bitmap_and_time(num_queries);
-   std::vector<std::bitset<10000001>> bitmap(num_queries);
-   auto bitmap_start_time = std::chrono::high_resolution_clock::now();
-#pragma omp parallel for
-   for (int id = 0; id < num_queries; id++)
+   // 为所有查询预先计算并存储入口组ID
+   std::cout << "\n--- Step 1: Pre-computing Entry Group IDs (Measuring Entry Cost) ---" << std::endl;
+   std::vector<std::vector<ANNS::IdxType>> all_entry_group_ids(num_queries);
+   auto entry_cost_start_time = std::chrono::high_resolution_clock::now();
+   #pragma omp parallel for
+   for (int id = 0; id < num_queries; ++id)
    {
-      bitmap_and_time[id] = index.compute_attribute_bitmap(query_storage->get_label_set(id));
-      bitmap[id] = bitmap_and_time[id].first;
+      const auto& query_labels = query_storage->get_label_set(id);
+      ANNS::QueryStats dummy_stats; 
+      static std::atomic<int> trie_debug_print_counter{0};
+
+      // 调用函数来计算入口组，并存入 all_entry_group_ids
+      const_cast<ANNS::UniNavGraph&>(index).get_min_super_sets_debug(
+          query_labels,
+          all_entry_group_ids[id], // 将结果存入新容器中
+          false, true,
+          trie_debug_print_counter,
+          is_new_trie_method,
+          is_rec_more_start,
+          dummy_stats
+      );
    }
-   auto bitmap_total_time = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - bitmap_start_time).count();
-   std::cout << "Total bitmap computation time for all queries: " << bitmap_total_time << " ms" << std::endl;
+   auto entry_cost_total_time = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - entry_cost_start_time).count();
+   std::cout << "Total time for finding all entry groups (Entry Cost): " << entry_cost_total_time << " ms\n" << std::endl;
+   std::cout << "--- Step 2: Starting Fair Bitmap Computation Comparison ---" << std::endl;
+   double ung_bitmap_total_time = 0.0;
+   double attr_bitmap_total_time = 0.0;
+   // --- 评测 A: UNG方法 (从已知的Groups生成Bitmap) ---
+   {
+      std::cout << "  -> Testing UNG method (compute_bitmap_from_groups)..." << std::endl;
+      std::vector<roaring::Roaring> ung_bitmaps(num_queries);
+      auto start_time = std::chrono::high_resolution_clock::now();
+      
+      #pragma omp parallel for
+      for (int id = 0; id < num_queries; ++id) {
+          ung_bitmaps[id] = index.compute_bitmap_from_groups(all_entry_group_ids[id]);
+      }
+   
+      ung_bitmap_total_time = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
+      std::cout << "  -> UNG bitmap generation time: " << ung_bitmap_total_time << " ms" << std::endl;
+   }
+   // --- 评测 B: 倒排索引方法 (compute_attribute_bitmap) ---
+   {
+      std::cout << "  -> Testing Attribute method (compute_attribute_bitmap)..." << std::endl;
+      std::vector<std::bitset<10000001>> attr_bitmaps(num_queries);
+      auto start_time = std::chrono::high_resolution_clock::now();
+
+      #pragma omp parallel for
+      for (int id = 0; id < num_queries; id++)
+      {
+         // 注意：compute_attribute_bitmap 返回一个 pair，我们只取位图部分
+         attr_bitmaps[id] = index.compute_attribute_bitmap(query_storage->get_label_set(id)).first;
+      }
+      
+      attr_bitmap_total_time = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
+      std::cout << "  -> Attribute bitmap generation time: " << attr_bitmap_total_time << " ms" << std::endl;
+   }
+   std::cout << "--- Fair Comparison Finished ---\n" << std::endl;
+   auto bitmap_total_time = attr_bitmap_total_time; // 默认使用倒排索引方法
+
 
    // init query stats
    std::vector<std::vector<std::vector<ANNS::QueryStats>>> query_stats(num_repeats, std::vector<std::vector<ANNS::QueryStats>>(Lsearch_list.size(), std::vector<ANNS::QueryStats>(num_queries))); //(repeat,Lsearch,queryID)
@@ -210,7 +258,7 @@ int main(int argc, char **argv)
          else
          {
              index.search_hybrid(query_storage, distance_handler, num_threads, current_Lsearch,
-                                 num_entry_points, scenario, K, results, num_cmps, query_stats[repeat][LsearchId], bitmap, is_ori_ung, is_new_trie_method, is_rec_more_start, is_ung_more_entry, 1000,1000,10,5,true_query_group_ids);
+                                 num_entry_points, scenario, K, results, num_cmps, query_stats[repeat][LsearchId],is_ori_ung, is_new_trie_method, is_rec_more_start, is_ung_more_entry, 1000,1000,10,5,true_query_group_ids);
          }
          auto time_cost = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
 
@@ -276,7 +324,7 @@ int main(int argc, char **argv)
    // save query details for every query
    std::ofstream detail_out(result_path_prefix + "query_details_repeat" + std::to_string(num_repeats) + ".csv");
    detail_out << "repeat,Lsearch,QueryID,Time_ms,idea1_flag_ms,MinSupersetT_ms,EntryGroupT_ms,DescMergeT_ms,CovMergeT_ms,"
-              << "FlagT_ms,BitmapT_ms,SearchT_ms,DistCalcs,NumEntries,NumDescendants,TotalCoverage,QuerySize,"
+              << "FlagT_ms,BitmapT_new_ms,SearchT_ms,DistCalcs,NumEntries,NumDescendants,TotalCoverage,QuerySize,"
               << "CandSize,SuccessChecks,HitRatio,RecurCalls,PruneEvents,PruneEff,TrieNodePass,M1TrieReNode,NumNodeVisited,"
               << "QPS,Recall,IsGlobal\n";
    for (int repeat = 0; repeat < num_repeats; repeat++)
@@ -296,7 +344,7 @@ int main(int argc, char **argv)
                        << query_stats[repeat][LsearchId][i].descendants_merge_time_ms << ","
                        << query_stats[repeat][LsearchId][i].coverage_merge_time_ms << ","
                        << query_stats[repeat][LsearchId][i].flag_time_ms << ","
-                       << bitmap_and_time[i].second << ","
+                       << query_stats[repeat][LsearchId][i].bitmap_time_ms << ","
                        << query_stats[repeat][LsearchId][i].time_ms - query_stats[repeat][LsearchId][i].flag_time_ms << ","
                        << query_stats[repeat][LsearchId][i].num_distance_calcs << ","
                        << query_stats[repeat][LsearchId][i].num_entry_points << ","

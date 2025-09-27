@@ -217,6 +217,10 @@ int main(int argc, char* argv[]) {
              (double)acorn_1_total_size_bytes / (1024.0 * 1024.0),
              (double)acorn_1_vectors_size_bytes / (1024.0 * 1024.0),
              (double)acorn_1_index_only_size_bytes / (1024.0 * 1024.0));
+      
+      // 保存倒排索引
+      std::string inverted_index_path = index_path_acorn + ".inverted_index";
+      build_and_save_inverted_index(metadata, N, inverted_index_path);
 
       printf("[%.3f s] Build finished successfully.\n", elapsed() - t0);
       return 0;
@@ -314,34 +318,17 @@ int main(int argc, char* argv[]) {
         std::string last_value = query_path.substr(query_path.find_last_of('_') + 1);
         std::string MY_DIS_SORT_DIR = dis_output_path + "/" + dataset + "_query_" + last_value + "/my_dis_sort";
 
-         // 串行计算 Filter Map
-         double t_filter_0 = elapsed();
-         std::vector<char> filter_ids_map(nq * N);
-         for (int xq_idx = 0; xq_idx < nq; xq_idx++) {
-            for (int xb_idx = 0; xb_idx < N; xb_idx++) {
-               const auto& query_attrs = aq[xq_idx];
-               const auto& data_attrs = metadata[xb_idx];
-               bool is_subset = std::includes(data_attrs.begin(), data_attrs.end(), query_attrs.begin(), query_attrs.end());
-               filter_ids_map[xq_idx * N + xb_idx] = is_subset;
-            }
-         }
-         double filter_time_s = elapsed() - t_filter_0;
-         printf("[%.3f s] Filter map created in %.4f s\n", elapsed() - t0, filter_time_s);
-
-        // 并行计算 Filter Map
-        double t_filter_para_0 = elapsed();
-        std::vector<char> filter_ids_map_para(nq * N);
-        #pragma omp parallel for
-        for (int xq_idx = 0; xq_idx < nq; xq_idx++) {
-            for (int xb_idx = 0; xb_idx < N; xb_idx++) {
-                const auto& query_attrs = aq[xq_idx];
-                const auto& data_attrs = metadata[xb_idx];
-                bool is_subset = std::includes(data_attrs.begin(), data_attrs.end(), query_attrs.begin(), query_attrs.end());
-                filter_ids_map_para[xq_idx * N + xb_idx] = is_subset;
-            }
-        }
-        double filter_para_time_s = elapsed() - t_filter_para_0;
-        printf("[%.3f s] Filter map created in %.4f s\n", elapsed() - t0, filter_para_time_s);
+         // 计算filter map
+         std::string inverted_index_path = index_path_acorn + ".inverted_index";
+         std::unordered_map<int, std::vector<int>> inverted_index = load_inverted_index(inverted_index_path);
+         hybrid_index->set_inverted_index(inverted_index);
+         hybrid_index_gamma1->set_inverted_index(inverted_index);
+         printf("[%.3f s] Inverted index set into ACORN instances.\n", elapsed() - t0);
+         printf("[%.3f s] Generating filter map using loaded index...\n", elapsed() - t0);
+         double t_filter_para_0 = elapsed();
+         std::vector<char> filter_ids_map_para = generate_filter_map_from_index(inverted_index, nq, N, aq);
+         double filter_para_time_s = elapsed() - t_filter_para_0;
+         printf("[%.3f s] Filter map created in %.4f s\n", elapsed() - t0, filter_para_time_s);
 
          // Ground Truth生成
          {
@@ -407,7 +394,7 @@ int main(int argc, char* argv[]) {
                 hybrid_index->acorn.efSearch = current_efs;
                 faiss::acorn_stats.reset();
                 double t1_acorn = elapsed();
-                hybrid_index->search(nq, xq, k, dis2.data(), nns2.data(), filter_ids_map_para.data(), &query_times, &query_qps, &query_n3, if_bfs_filter);
+                hybrid_index->search(nq, xq, k, dis2.data(), nns2.data(), aq, &query_times, &query_qps, &query_n3, if_bfs_filter);
                 double search_time_acorn_s = elapsed() - t1_acorn;
                 const faiss::ACORNStats& acorn_search_stats = faiss::acorn_stats;
 
@@ -422,7 +409,7 @@ int main(int argc, char* argv[]) {
                 hybrid_index_gamma1->acorn.efSearch = current_efs;
                 faiss::acorn_stats.reset();
                 double t1_acorn1 = elapsed();
-                hybrid_index_gamma1->search(nq, xq, k, dis3.data(), nns3.data(), filter_ids_map_para.data(), &query_times3, &query_qps3, &query_n33, if_bfs_filter);
+                hybrid_index_gamma1->search(nq, xq, k, dis3.data(), nns3.data(), aq, &query_times3, &query_qps3, &query_n33, if_bfs_filter);
                 double search_time_acorn1_s = elapsed() - t1_acorn1;
                 const faiss::ACORNStats& acorn1_search_stats = faiss::acorn_stats;
                 
@@ -520,7 +507,7 @@ int main(int argc, char* argv[]) {
         avg_csv_file << "efs,acorn_Time_ms,acorn_QPS,acorn_Recall,acorn_n3_visited_avg,"
                      << "acorn_build_time_ms,acorn_index_size_MB,"
                      << "acorn_1_Time_ms,acorn_1_QPS,acorn_1_Recall,acorn_1_n3_visited_avg,"
-                     << "acorn_1_build_time_ms,acorn_1_index_size_MB,FilterMapTime_ms,FilterMapTime_para_ms\n";
+                     << "acorn_1_build_time_ms,acorn_1_index_size_MB,FilterMapTime_para_ms\n";
         for (int efs_id = 0; efs_id < efs_list.size(); efs_id++) {
             const auto& aggregated = final_avg_results[efs_id];
             avg_csv_file << efs_list[efs_id] << ","
@@ -536,7 +523,6 @@ int main(int argc, char* argv[]) {
                          << (double)aggregated.total_acorn_1_n3 / (nq * repeat_num) << ","
                          << acorn_1_build_time_s * 1000.0 << ","
                          << (double)acorn_1_index_size_bytes / (1024.0 * 1024.0) << ","
-                         << filter_time_s * 1000.0 << ","
                          << filter_para_time_s * 1000.0 << "\n";
         }
         avg_csv_file.close();

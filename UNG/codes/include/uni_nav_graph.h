@@ -30,12 +30,14 @@ namespace ANNS
       double get_min_super_sets_time_ms; // 获取最小入口集合耗时
       double get_group_entry_time_ms;    // 计算入口点耗时
       double idea1_flag_time_ms;      // idea1计算flag耗时
+      double bitmap_time_ms = 0.0;    // 计算bitmap耗时
       double entry_group_total_coverage;
       size_t num_distance_calcs;
       size_t num_entry_points;
       size_t num_lng_descendants;
       bool is_global_search;
       int acorn_efs_used;
+     
 
       size_t num_nodes_visited = 0; // 用于存储search过程中的节点总数
 
@@ -109,7 +111,6 @@ namespace ANNS
                          IdxType K, std::pair<IdxType, float> *results,
                          std::vector<float> &num_cmps,
                          std::vector<QueryStats> &query_stats,
-                         std::vector<std::bitset<10000001>> &bitmaps,
                          bool is_ori_ung,
                          bool is_select_entry_groups, bool is_rec_more_start,
                          bool is_ung_more_entry, 
@@ -203,6 +204,13 @@ namespace ANNS
       AtrType _num_attributes;                              // 唯一属性数量
 
       std::pair<std::bitset<10000001>, double> compute_attribute_bitmap(const std::vector<LabelType> &query_attributes) const; // 构建bitmap
+      roaring::Roaring compute_bitmap_from_groups(const std::vector<IdxType>& group_ids) const;
+      std::vector<roaring::Roaring> batch_compute_ung_bitmaps(
+         const ANNS::UniNavGraph& index,
+         const std::shared_ptr<ANNS::IStorage>& query_storage,
+         uint32_t num_threads,
+         bool is_new_trie_method,
+         bool is_rec_more_start) ;
 
       // 求search中flag需要的数据结构
       std::vector<BitsetType> _lng_descendants_bits; // 每个 group 的后代集合
@@ -216,6 +224,11 @@ namespace ANNS
           size_t top_k,                                   // 除了基础入口外，额外选择 K 个最优入口
           double beta = 1.0,                              // 策略2中，用于调节跳数权重的 beta 值
           IdxType true_query_group_id = 0) const;         // 声明为 const 函数，因为它不应修改图的状态
+      
+      void get_min_super_sets_debug(const std::vector<LabelType> &query_label_set,
+                                    std::vector<IdxType> &min_super_set_ids,
+                                    bool avoid_self, bool need_containment,
+                                    std::atomic<int> &print_counter, bool is_new_trie_method, bool is_rec_more_start, QueryStats &stats);
 
    private:
       // data
@@ -237,14 +250,6 @@ namespace ANNS
       std::shared_ptr<LabelNavGraph> _label_nav_graph = nullptr;
       void get_min_super_sets(const std::vector<LabelType> &query_label_set, std::vector<IdxType> &min_super_set_ids,
                               bool avoid_self = false, bool need_containment = true);
-      void get_min_super_sets_pruning(const std::vector<LabelType> &query_label_set, std::vector<IdxType> &min_super_set_ids,
-                                      bool avoid_self, bool need_containment);
-      void get_min_super_sets_roaring(const std::vector<LabelType> &query_label_set, std::vector<IdxType> &min_super_set_ids,
-                                      bool avoid_self = false, bool need_containment = true);
-      void get_min_super_sets_debug(const std::vector<LabelType> &query_label_set,
-                                    std::vector<IdxType> &min_super_set_ids,
-                                    bool avoid_self, bool need_containment,
-                                    std::atomic<int> &print_counter, bool is_new_trie_method, bool is_rec_more_start, QueryStats &stats);
       void cal_f_coverage_ratio();
       void build_label_nav_graph();
       size_t count_all_descendants(IdxType group_id) const;
