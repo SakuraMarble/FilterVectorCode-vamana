@@ -7,7 +7,7 @@
 
 set -e # 如果任何命令失败，则立即退出
 
-export TMPDIR="/data/fxy/FilterVector/build"
+export TMPDIR="/home/mabojing/vamana-new/UNG_tmp_dir"
 mkdir -p "$TMPDIR"
 
 # --- 检查jq是否安装 ---
@@ -16,7 +16,7 @@ if ! command -v jq &> /dev/null; then
     exit 1
 fi
 
-CONFIG_FILE="../../FilterVectorCode/UNG/experiments.json"
+CONFIG_FILE="experiments.json"
 
 # ==============================================================================
 # 核心逻辑:

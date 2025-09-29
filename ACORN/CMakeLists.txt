@@ -74,7 +74,7 @@ endif()
 # FetchContent_GetProperties(nlohmann_json)
 include(FetchContent)
 FetchContent_Declare(nlohmann_json
-    URL "file:///data/fxy/FilterVector/FilterVectorCode/thirdparty/json-3.10.4.tar.gz"
+    URL "file:///home/mabojing/vamana-new/FilterVectorCode-vamana/thirdparty/json-3.10.4.tar.gz"
 )
 FetchContent_MakeAvailable(nlohmann_json)
 if(NOT nlohmann_json_POPULATED)
